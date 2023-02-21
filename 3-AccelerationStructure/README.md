@@ -27,6 +27,7 @@ uint64_t mTlasSize = 0;
 Most of the action happens inside createAccelerationStructures().It’s a new function we added which is called from onLoad().
 
 ## 3.1 createBuffer
+need helper method for creating all the buffers
 ```c++
 // 3.1 createBuffer
 ID3D12ResourcePtr createBuffer(ID3D12Device5Ptr pDevice, uint64_t size, D3D12_RESOURCE_FLAGS flags, D3D12_RESOURCE_STATES initState, const D3D12_HEAP_PROPERTIES& heapProps)
@@ -50,6 +51,7 @@ ID3D12ResourcePtr createBuffer(ID3D12Device5Ptr pDevice, uint64_t size, D3D12_RE
 }
 ```
 ## 3.2 TriangleVB upload heap props
+need upload heap properties for creating buffers starting with the triangle vertex buffer
 ```c++
 // 3.2 TriangleVB upload heap props
 static const D3D12_HEAP_PROPERTIES kUploadHeapProps =
@@ -89,6 +91,7 @@ ID3D12ResourcePtr createTriangleVB(ID3D12Device5Ptr pDevice)
 }
 ```
 
+## 3.4 bottom-level acceleration structure
 Next, we will create the bottom-level acceleration structure
 
 AccelerationStructureBuffers bottomLevelBuffers = createBottomLevelAS(mpDevice, mpCmdList, mpVertexBuffer);
@@ -127,9 +130,67 @@ Now that we have everything we need, we can create the acceleration structure. W
 Additionally, we must pass the GPU virtual addresses of the destination AS and the scratch buffer.
 Now that we have a descriptor ready, we can record a command.
 
+```c++
+// 3.4.a bottom-level acceleration structure
+static const D3D12_HEAP_PROPERTIES kDefaultHeapProps =
+{
+    D3D12_HEAP_TYPE_DEFAULT,
+    D3D12_CPU_PAGE_PROPERTY_UNKNOWN,
+    D3D12_MEMORY_POOL_UNKNOWN,
+    0,
+    0
+};
+// 3.4.b bottom-level acceleration structure
+struct AccelerationStructureBuffers
+{
+    ID3D12ResourcePtr pScratch;
+    ID3D12ResourcePtr pResult;
+    ID3D12ResourcePtr pInstanceDesc;    // Used only for top-level AS
+};
+//3.4.c bottom-level acceleration structure
+AccelerationStructureBuffers createBottomLevelAS(ID3D12Device5Ptr pDevice, ID3D12GraphicsCommandList4Ptr pCmdList, ID3D12ResourcePtr pVB)
+{
+    D3D12_RAYTRACING_GEOMETRY_DESC geomDesc = {};
+    geomDesc.Type = D3D12_RAYTRACING_GEOMETRY_TYPE_TRIANGLES;
+    geomDesc.Triangles.VertexBuffer.StartAddress = pVB->GetGPUVirtualAddress();
+    geomDesc.Triangles.VertexBuffer.StrideInBytes = sizeof(vec3);
+    geomDesc.Triangles.VertexFormat = DXGI_FORMAT_R32G32B32_FLOAT;
+    geomDesc.Triangles.VertexCount = 3;
+    geomDesc.Flags = D3D12_RAYTRACING_GEOMETRY_FLAG_OPAQUE;
 
+    // Get the size requirements for the scratch and AS buffers
+    D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS inputs = {};
+    inputs.DescsLayout = D3D12_ELEMENTS_LAYOUT_ARRAY;
+    inputs.Flags = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_NONE;
+    inputs.NumDescs = 1;
+    inputs.pGeometryDescs = &geomDesc;
+    inputs.Type = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL;
 
+    D3D12_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO info = {};
+    pDevice->GetRaytracingAccelerationStructurePrebuildInfo(&inputs, &info);
 
+    // Create the buffers. They need to support UAV, and since we are going to immediately use them, we create them with an unordered-access state
+    AccelerationStructureBuffers buffers;
+    buffers.pScratch = createBuffer(pDevice, info.ScratchDataSizeInBytes, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, kDefaultHeapProps);
+    buffers.pResult = createBuffer(pDevice, info.ResultDataMaxSizeInBytes, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_RAYTRACING_ACCELERATION_STRUCTURE, kDefaultHeapProps);
+
+    // Create the bottom-level AS
+    D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_DESC asDesc = {};
+    asDesc.Inputs = inputs;
+    asDesc.DestAccelerationStructureData = buffers.pResult->GetGPUVirtualAddress();
+    asDesc.ScratchAccelerationStructureData = buffers.pScratch->GetGPUVirtualAddress();
+
+    pCmdList->BuildRaytracingAccelerationStructure(&asDesc, 0, nullptr);
+
+    // We need to insert a UAV barrier before using the acceleration structures in a raytracing operation
+    D3D12_RESOURCE_BARRIER uavBarrier = {};
+    uavBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_UAV;
+    uavBarrier.UAV.pResource = buffers.pResult;
+    pCmdList->ResourceBarrier(1, &uavBarrier);
+
+    return buffers;
+}
+```
 
 Calling BuildRaytracingAccelerationStructure() will record a command into the list. This command will note be processed until we submit the command list, so make sure the scratch-buffer will not be released until execution finishes.
 In the next section we will use the BLAS as an input for another BuildRaytracingAccelerationStructure() operation. We need to make sure that the write operation will finish before reading data from the result buffer. We do that using a regular UAV-barrier.
