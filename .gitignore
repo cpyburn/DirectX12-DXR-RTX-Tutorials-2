@@ -30,3 +30,17 @@
 *.exe
 *.out
 *.app
+/.vs
+/1-CreateWindow/DxrTutorials-master/Tutorials/14-Refit
+/1-CreateWindow/DxrTutorials-master/Tutorials/13-SecondRayType
+/1-CreateWindow/DxrTutorials-master/Tutorials/12-PerGeometryHitShader
+/1-CreateWindow/DxrTutorials-master/Tutorials/11-SecondGeometry
+/1-CreateWindow/DxrTutorials-master/Tutorials/10-PerInstanceConstantBuffer
+/1-CreateWindow/DxrTutorials-master/Tutorials/09-ConstantBuffer
+/1-CreateWindow/DxrTutorials-master/Tutorials/08-Instancing
+/1-CreateWindow/DxrTutorials-master/Tutorials/07-BasicShaders
+/1-CreateWindow/DxrTutorials-master/Tutorials/06-Raytrace
+/1-CreateWindow/DxrTutorials-master/Tutorials/05-ShaderTable
+/1-CreateWindow/DxrTutorials-master/Tutorials/04-RtPipelineState
+/1-CreateWindow/DxrTutorials-master/Tutorials/03-AccelerationStructure
+/1-CreateWindow/DxrTutorials-master/Tutorials/02-InitDXR
