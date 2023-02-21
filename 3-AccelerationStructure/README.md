@@ -96,12 +96,18 @@ Next, we will create the bottom-level acceleration structure
 
 AccelerationStructureBuffers bottomLevelBuffers = createBottomLevelAS(mpDevice, mpCmdList, mpVertexBuffer);
 Bottom-Level Acceleration Structure
+
 The BLAS is a data structure that represent a local-space mesh. It does not contain information regarding the world-space location of the vertices or instancing information. 
+
 The first thing in creating it is initializing a D3D12_RAYTRACING_GEOMETRY_DESC struct:
 
+
 We first set the type to D3D12_RAYTRACING_GEOMETRY_TYPE_TRIANGLES. This implies we will be using the built-in triangle intersection shader, but we will get to what that exactly means in tutorial 7. 
+
 Next, we set the GPU virtual address of the vertex-buffer.
+
 The next 3 fields are equivalent to an input element layout descriptor. They describe the vertex stride, the offset of the position element inside the vertex and the position format. We only have a single element in our VB, which is the position, meaning VertexByteOffset equals 0. Each vertex is exactly 3 floats, and that’s the size and format of the vertex.
+
 Next, we will set the number of vertices in the buffer. We only have 3.
 The Flags field allows us to control some aspects of the acceleration structure. In this case, we know that the triangle is not transparent and so we set the D3D12_RAYTRACING_GEOMETRY_FLAG_OPAQUE flag.
 The spec recommends using this flag as much as possible. We will get to what this flag means exactly in tutorial 7.
