@@ -14,12 +14,80 @@ Overview
 Now that we can clear the screen, it’s time to render something. The following 5 tutorials will do just that – we will write some code that will use raytracing to render a triangle to the screen.
 The first thing we need to create are acceleration structures. An acceleration structure is an opaque data structure that represents the scene’s geometry. This structure is used in rendering time to intersect rays against. For more information on it and optimized usage please refer to the spec. In this tutorial we will focus on how to create it.
 
-The Whole Story
+## 3.0 01-CreateWindow.h
+```c++ 
+// Tutorial 3
+void createAccelerationStructures();
+ID3D12ResourcePtr mpVertexBuffer;
+ID3D12ResourcePtr mpTopLevelAS;
+ID3D12ResourcePtr mpBottomLevelAS;
+uint64_t mTlasSize = 0;
+```
+
 Most of the action happens inside createAccelerationStructures().It’s a new function we added which is called from onLoad().
+
+## 3.1 createBuffer
+```c++
+// 3.1 createBuffer
+ID3D12ResourcePtr createBuffer(ID3D12Device5Ptr pDevice, uint64_t size, D3D12_RESOURCE_FLAGS flags, D3D12_RESOURCE_STATES initState, const D3D12_HEAP_PROPERTIES& heapProps)
+{
+    D3D12_RESOURCE_DESC bufDesc = {};
+    bufDesc.Alignment = 0;
+    bufDesc.DepthOrArraySize = 1;
+    bufDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+    bufDesc.Flags = flags;
+    bufDesc.Format = DXGI_FORMAT_UNKNOWN;
+    bufDesc.Height = 1;
+    bufDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+    bufDesc.MipLevels = 1;
+    bufDesc.SampleDesc.Count = 1;
+    bufDesc.SampleDesc.Quality = 0;
+    bufDesc.Width = size;
+
+    ID3D12ResourcePtr pBuffer;
+    d3d_call(pDevice->CreateCommittedResource(&heapProps, D3D12_HEAP_FLAG_NONE, &bufDesc, initState, nullptr, IID_PPV_ARGS(&pBuffer)));
+    return pBuffer;
+}
+```
+## 3.2 TriangleVB upload heap props
+```c++
+// 3.2 TriangleVB upload heap props
+static const D3D12_HEAP_PROPERTIES kUploadHeapProps =
+{
+    D3D12_HEAP_TYPE_UPLOAD,
+    D3D12_CPU_PAGE_PROPERTY_UNKNOWN,
+    D3D12_MEMORY_POOL_UNKNOWN,
+    0,
+    0,
+};
+```
+
+## 3.3 createTriangleVB
 The first line of code there is
 mpVertexBuffer = createTriangleVB(mpDevice);
 
 This is a standard triangle vertex-buffer, created using the regular DX12 API and so we will not go into details. The only thing to note is that we allocate buffer on the upload heap, but that’s just for convenience as it simplifies the code.
+
+```c++
+// 3.3 createTriangleVB
+ID3D12ResourcePtr createTriangleVB(ID3D12Device5Ptr pDevice)
+{
+    const vec3 vertices[] =
+    {
+        vec3(0,          1,  0),
+        vec3(0.866f,  -0.5f, 0),
+        vec3(-0.866f, -0.5f, 0),
+    };
+
+    // For simplicity, we create the vertex buffer on the upload heap, but that's not required
+    ID3D12ResourcePtr pBuffer = createBuffer(pDevice, sizeof(vertices), D3D12_RESOURCE_FLAG_NONE, D3D12_RESOURCE_STATE_GENERIC_READ, kUploadHeapProps);
+    uint8_t* pData;
+    pBuffer->Map(0, nullptr, (void**)&pData);
+    memcpy(pData, vertices, sizeof(vertices));
+    pBuffer->Unmap(0, nullptr);
+    return pBuffer;
+}
+```
 
 Next, we will create the bottom-level acceleration structure
 
