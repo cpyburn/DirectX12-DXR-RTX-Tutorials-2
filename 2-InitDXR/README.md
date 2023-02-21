@@ -17,6 +17,39 @@ Using DXR
 As of Windows 10 version 1809, also known as RS5, DXR is no longer an experimental feature and is a part of standard DirectX 12. This means there are no extra steps required to enable DXR. However, note that DXR functions are a part of the ID3D12Device5 and ID3D12GraphicsCommandList4 interfaces.
 The code here is normal D3D12 boilerplate application code – creating command-list, command-queue, command-allocator, fence object, swap-chain, render target view, etc.
 
+## 2.0 01-CreateWindow.h
+```c++
+    // Tutorial 2 code
+    void initDXR(HWND winHandle, uint32_t winWidth, uint32_t winHeight);
+    uint32_t beginFrame();
+    void endFrame(uint32_t rtvIndex);
+    HWND mHwnd = nullptr;
+    ID3D12Device5Ptr mpDevice;
+    ID3D12CommandQueuePtr mpCmdQueue;
+    IDXGISwapChain3Ptr mpSwapChain;
+    uvec2 mSwapChainSize;
+    ID3D12GraphicsCommandList4Ptr mpCmdList;
+    ID3D12FencePtr mpFence;
+    HANDLE mFenceEvent;
+    uint64_t mFenceValue = 0;
+
+    struct
+    {
+        ID3D12CommandAllocatorPtr pCmdAllocator;
+        ID3D12ResourcePtr pSwapChainBuffer;
+        D3D12_CPU_DESCRIPTOR_HANDLE rtvHandle;
+    } mFrameObjects[kDefaultSwapChainBuffers];
+
+    // Heap data
+    struct HeapData
+    {
+        ID3D12DescriptorHeapPtr pHeap;
+        uint32_t usedEntries = 0;
+    };
+    HeapData mRtvHeap;
+    static const uint32_t kRtvHeapSize = 3;
+```
+
 ## 2.1 createDxgiSwapChain
 ```c++
 // 2.1 createDxgiSwapChain
