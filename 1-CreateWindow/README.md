@@ -45,3 +45,36 @@ Running this application doesn’t yield much. Just an empty window.
 
 Conclusion
 We didn’t do much here. Just creating a window. In the next tutorial we will start using DXR.
+
+## 1.0 01-CreateWindow.h
+```c++
+// Tutorial 1 code
+void onLoad(HWND winHandle, uint32_t winWidth, uint32_t winHeight) override;
+void onFrameRender() override;
+void onShutdown() override;
+```
+## 1.1 01-CreateWindow.cpp
+```c++
+//////////////////////////////////////////////////////////////////////////
+// Callbacks
+//////////////////////////////////////////////////////////////////////////
+void Tutorial01::onLoad(HWND winHandle, uint32_t winWidth, uint32_t winHeight)
+{
+
+}
+
+void Tutorial01::onFrameRender()
+{
+
+}
+
+void Tutorial01::onShutdown()
+{
+
+}
+
+int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _In_ LPSTR lpCmdLine, _In_ int nShowCmd)
+{
+    Framework::run(Tutorial01(), "Tutorial 01 - Create Window");
+}
+```
