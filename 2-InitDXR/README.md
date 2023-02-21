@@ -162,7 +162,7 @@ uint64_t submitCommandList(ID3D12GraphicsCommandList4Ptr pCmdList, ID3D12Command
 ## 2.8 initDXR
 ```c++
 // 2.8 initDXR
-void Tutorial02::initDXR(HWND winHandle, uint32_t winWidth, uint32_t winHeight)
+void Tutorial01::initDXR(HWND winHandle, uint32_t winWidth, uint32_t winHeight)
 {
     mHwnd = winHandle;
     mSwapChainSize = uvec2(winWidth, winHeight);
@@ -204,7 +204,7 @@ void Tutorial02::initDXR(HWND winHandle, uint32_t winWidth, uint32_t winHeight)
 ## 2.9 beginFrame
 ```c++
 // 2.9 beginFrame
-uint32_t Tutorial02::beginFrame()
+uint32_t Tutorial01::beginFrame()
 {
     return mpSwapChain->GetCurrentBackBufferIndex();
 }
@@ -212,7 +212,7 @@ uint32_t Tutorial02::beginFrame()
 ## 2.10 endFrame
 ```c++
 // 2.10 endFrame
-void Tutorial02::endFrame(uint32_t rtvIndex)
+void Tutorial01::endFrame(uint32_t rtvIndex)
 {
     resourceBarrier(mpCmdList, mFrameObjects[rtvIndex].pSwapChainBuffer, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT);
     mFenceValue = submitCommandList(mpCmdList, mpCmdQueue, mpFence, mFenceValue);
