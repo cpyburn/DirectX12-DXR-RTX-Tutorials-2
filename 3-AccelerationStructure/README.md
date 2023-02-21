@@ -66,7 +66,7 @@ static const D3D12_HEAP_PROPERTIES kUploadHeapProps =
 
 ## 3.3 createTriangleVB
 The first line of code there is
-mpVertexBuffer = createTriangleVB(mpDevice);
+* mpVertexBuffer = createTriangleVB(mpDevice);
 
 This is a standard triangle vertex-buffer, created using the regular DX12 API and so we will not go into details. The only thing to note is that we allocate buffer on the upload heap, but that’s just for convenience as it simplifies the code.
 
@@ -94,7 +94,7 @@ ID3D12ResourcePtr createTriangleVB(ID3D12Device5Ptr pDevice)
 ## 3.4 bottom-level acceleration structure
 Next, we will create the bottom-level acceleration structure
 
-AccelerationStructureBuffers bottomLevelBuffers = createBottomLevelAS(mpDevice, mpCmdList, mpVertexBuffer);
+* AccelerationStructureBuffers bottomLevelBuffers = createBottomLevelAS(mpDevice, mpCmdList, mpVertexBuffer);
 Bottom-Level Acceleration Structure
 
 The BLAS is a data structure that represent a local-space mesh. It does not contain information regarding the world-space location of the vertices or instancing information. 
@@ -114,22 +114,22 @@ The spec recommends using this flag as much as possible. We will get to what thi
 
 Now that we are done with the descriptor, let’s create the buffer. As you know, in DX12, resource allocation and lifetime management is the user’s responsibility. DXR is no different in this regard – it will not allocate buffers for us, not even internal temporary buffers required during acceleration structure creation.
 DXR requires 2 buffers:
-Scratch buffer which is required for intermediate computation.
-The result buffer which will hold the acceleration data.
+* Scratch buffer which is required for intermediate computation.
+* The result buffer which will hold the acceleration data.
 To allocate these buffers, we need to know the required size. This is done using the following snippet:
 We first initialize a D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS struct:
-DescsLayout – We are using an array, so the layout is D3D12_ELEMENTS_LAYOUT_ARRAY.
-Flags – This field should match the value we will later use for building the acceleration structures. In our case we don’t use any special flags.
-The next 2 fields are the number of descriptors and the pointer to the descriptor array (in our case the array size is 1)
-Type – The type of the acceleration structure we are going to generate, bottom-level in our case.
+* DescsLayout – We are using an array, so the layout is D3D12_ELEMENTS_LAYOUT_ARRAY.
+* Flags – This field should match the value we will later use for building the acceleration structures. In our case we don’t use any special flags.
+* The next 2 fields are the number of descriptors and the pointer to the descriptor array (in our case the array size is 1)
+* Type – The type of the acceleration structure we are going to generate, bottom-level in our case.
 
 Next, we need to call GetRaytracingAccelerationStructurePrebuildInfo() function. Once we get the information we can allocate the buffers:
 
 The buffers are allocated on the default heap, since we don’t need read/write access to them. Both buffers must be created with the D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS flag because the implementation will be performing read/write operations, and synchronizing operations on these buffers are done through UAV barriers.
 
 The spec also requires the state of the buffers to be:
-D3D12_RESOURCE_STATE_UNORDERED_ACCESS for the scratch buffer.
-D3D12_RESOURCE_STATE_RAYTRACING_ACCELERATION_STRUCTURE for the destination buffer.
+* D3D12_RESOURCE_STATE_UNORDERED_ACCESS for the scratch buffer.
+* D3D12_RESOURCE_STATE_RAYTRACING_ACCELERATION_STRUCTURE for the destination buffer.
 
 Now that we have everything we need, we can create the acceleration structure. We start by initializing the AS descriptor. This also requires the same parameters we used to call GetRaytracingAccelerationStructurePrebuildInfo().
 
@@ -203,8 +203,9 @@ In the next section we will use the BLAS as an input for another BuildRaytracing
 
 
 
-Top-Level Acceleration Structure
+## 3.5 Top-Level Acceleration Structure
 The TLAS is an opaque data structure that represents the entire scene. As you recall, BLAS represents objects in local space. The TLAS references the bottom-level structures, with each reference containing local-to-world transformation matrix.
+
 Let’s take a look at createTopLevelAS().
 Like bottom-level AS creation, we need to create the result and scratch buffers. The code is very similar, the only difference is how we query the required sizes. This happens in the following snippet:
 The only difference is the Type field – we are requesting information for creating a TLAS.
