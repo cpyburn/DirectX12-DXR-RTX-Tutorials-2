@@ -207,26 +207,43 @@ In the next section we will use the BLAS as an input for another BuildRaytracing
 The TLAS is an opaque data structure that represents the entire scene. As you recall, BLAS represents objects in local space. The TLAS references the bottom-level structures, with each reference containing local-to-world transformation matrix.
 
 Let’s take a look at createTopLevelAS().
+
 Like bottom-level AS creation, we need to create the result and scratch buffers. The code is very similar, the only difference is how we query the required sizes. This happens in the following snippet:
+
 The only difference is the Type field – we are requesting information for creating a TLAS.
+
 Next, we will create the scratch and result buffer. Nothing new here.
+
 Now we can proceed to describe the instances used for the TLAS. We do that by filling a buffer of D3D12_RAYTRACING_INSTANCE_DESC. We pass an array of such descriptors to the BuildRaytracingAcceleration() function. This array describes the scene.
+
 The first thing to know about this array, is that it can’t simply reside on the regular C++ heap. We need to pass this array to BuildRaytracingAcceleration() in a GPU buffer (either on the upload or default heap). Since it’s a DX resource accessed by the GPU, all the regular synchronization and lifetime management rules apply.
+
 We only have a single instance, so we create a buffer with that size, then map it to write. Next, we will initialize it.
+
 The first field is InstanceID. It doesn’t affect raytracing at all, and the runtime ignores it while tracing rays. It’s simply a user-defined value that will communicated to the shader via the InstanceID() intrinsic.
+
 InstanceContributionToHitGroupIndex is the offset of the instance inside the shader-binding-table. Let’s set it to 0 for now. This value will be explained in tutorial 5.
+
 There are numerous options for the Flags. Refer to the spec for more details, in the tutorial we will just set it to D3D12_RAYTRACING_INSTANCE_FLAG_NONE.
+
 Next is the transformation matrix. It’s a 3x4 affine transform matrix in row-major layout. This transformation will be applied to each vertex in the bottom-level structure. In this case, we are setting an identity matrix. This value can also be nullptr, which is equivalent to setting an identity matrix, but may result in better performance.
+
 The last field – AccelerationStructure – is the GPU virtual address of the bottom-level acceleration structure containing the vertex data.
+
 After we finish the initialization, we can unmap the desc-buffer and call BuildRaytracingAccelerationStructure(). The code is almost identical to the one used to create the BLAS, except:
-We need to set the instance-descriptor buffer GPU VA into the InstanceDescs field.
-We need to set the Type field to D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL
+* We need to set the instance-descriptor buffer GPU VA into the InstanceDescs field.
+* We need to set the Type field to D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL
+
 Just as we did for the BLAS, we need to insert a UAV barrier for the result buffer. This step is required because we need to make sure that the write operation performed in BuildRaytracingAccelerationStructure() finishes before the read operation in DispatchRays() (will be shown in tutorial 6).
-Back to createAccelerationStructures()
+
+## 3.6 Back to createAccelerationStructures()
 We created some buffers and recorded commands to create bottom-level and top-level acceleration structures. We now need to execute the command-list. To simplify resource lifetime management, we will submit the list and wait until the GPU finishes its execution. This is not required by the spec – the list can be submitted whenever as long as the resources are kept alive until execution finishes.
+
 The last part is releasing resources that are no longer required and keep references to the resources which will be used for rendering.
+
 Remember that we are using smart COM-pointers, so keeping reference is as simple as storing a copy of the smart-pointer. This happens in the following code:
 
 
 Note that we need to store both top-level and bottom-level structures. The scratch buffers and the instance-desc buffers will be released automatically once the local variable holding their smart pointer goes out of scope.
+
 And that’s it! We have acceleration structures, which means one major concept of DXRT is behind us!
