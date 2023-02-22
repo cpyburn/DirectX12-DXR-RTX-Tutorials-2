@@ -65,4 +65,11 @@ private:
     };
     HeapData mRtvHeap;
     static const uint32_t kRtvHeapSize = 3;
+
+    // Tutorial 03
+    void createAccelerationStructures();
+    ID3D12ResourcePtr mpVertexBuffer;
+    ID3D12ResourcePtr mpTopLevelAS;
+    ID3D12ResourcePtr mpBottomLevelAS;
+    uint64_t mTlasSize = 0;
 };
