@@ -77,4 +77,9 @@ private:
     void createRtPipelineState();
     ID3D12StateObjectPtr mpPipelineState;
     ID3D12RootSignaturePtr mpEmptyRootSig;
+
+    // Tutorial 05
+    void createShaderTable();
+    ID3D12ResourcePtr mpShaderTable;
+    uint32_t mShaderTableEntrySize = 0;
 };

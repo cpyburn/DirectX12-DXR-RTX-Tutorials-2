@@ -742,51 +742,6 @@ void Tutorial01::createRtPipelineState()
     d3d_call(mpDevice->CreateStateObject(&desc, IID_PPV_ARGS(&mpPipelineState)));
 }
 
-// 5.0 Shader Table Records 
-void Tutorial01::createShaderTable()
-{
-    /** The shader-table layout is as follows:
-        Entry 0 - Ray-gen program
-        Entry 1 - Miss program
-        Entry 2 - Hit program
-        All entries in the shader-table must have the same size, so we will choose it base on the largest required entry.
-        The ray-gen program requires the largest entry - sizeof(program identifier) + 8 bytes for a descriptor-table.
-        The entry size must be aligned up to D3D12_RAYTRACING_SHADER_RECORD_BYTE_ALIGNMENT
-    */
-
-    // Calculate the size and create the buffer
-    mShaderTableEntrySize = D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES;
-    mShaderTableEntrySize += 8; // The ray-gen's descriptor table
-    mShaderTableEntrySize = align_to(D3D12_RAYTRACING_SHADER_RECORD_BYTE_ALIGNMENT, mShaderTableEntrySize);
-    uint32_t shaderTableSize = mShaderTableEntrySize * 3; // We have 3 programs and a single geometry, so we need 3 entries (we’ll get to why the number of entries depends on the geometry count in later tutorials).
-
-    // For simplicity, we create the shader-table on the upload heap. You can also create it on the default heap
-    mpShaderTable = createBuffer(mpDevice, shaderTableSize, D3D12_RESOURCE_FLAG_NONE, D3D12_RESOURCE_STATE_GENERIC_READ, kUploadHeapProps);
-
-    // Map the buffer
-    uint8_t* pData;
-    d3d_call(mpShaderTable->Map(0, nullptr, (void**)&pData));
-
-    MAKE_SMART_COM_PTR(ID3D12StateObjectProperties);
-    ID3D12StateObjectPropertiesPtr pRtsoProps;
-    mpPipelineState->QueryInterface(IID_PPV_ARGS(&pRtsoProps));
-
-    // Entry 0 - ray-gen program ID and descriptor data
-    memcpy(pData, pRtsoProps->GetShaderIdentifier(kRayGenShader), D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES);
-
-    // This is where we need to set the descriptor data for the ray-gen shader. We'll get to it in the next tutorial
-
-    // Entry 1 - miss program
-    memcpy(pData + mShaderTableEntrySize, pRtsoProps->GetShaderIdentifier(kMissShader), D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES);
-
-    // Entry 2 - hit program
-    uint8_t* pHitEntry = pData + mShaderTableEntrySize * 2; // +2 skips the ray-gen and miss entries
-    memcpy(pHitEntry, pRtsoProps->GetShaderIdentifier(kHitGroup), D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES);
-
-    // Unmap
-    mpShaderTable->Unmap(0, nullptr);
-}
-
 //////////////////////////////////////////////////////////////////////////
 // Callbacks
 //////////////////////////////////////////////////////////////////////////
@@ -794,9 +749,8 @@ void Tutorial01::onLoad(HWND winHandle, uint32_t winWidth, uint32_t winHeight)
 {
     // 2.11 onLoad
     initDXR(winHandle, winWidth, winHeight); // Tutorial 02
-    createAccelerationStructures(); // Tutorial 03
-    createRtPipelineState(); // Tutorial 04
-    createShaderTable(); // Tutorial 05
+    createAccelerationStructures();             // Tutorial 03
+    createRtPipelineState();                    // Tutorial 04
 }
 
 void Tutorial01::onFrameRender()
