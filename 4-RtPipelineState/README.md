@@ -83,7 +83,9 @@ ID3DBlobPtr compileLibrary(const WCHAR* filename, const WCHAR* targetString)
 DXR introduces 5 new shader types – ray-generation, miss, closest-hit, any-hit, and intersection. All the shaders for this tutorial can be found in 04-Shaders.hlsl.
 *include 04-Shaders.hlsl and set property - Does not participate in build*
 ```c++
-// 4.2 Ray-Tracing Shaders 04-Shaders.hlsl
+// 4.2 Ray - Tracing Shaders 04 - Shaders.hlsl
+
+// 4.3.a Ray-Generation Shader
 RaytracingAccelerationStructure gRtScene : register(t0);
 RWTexture2D<float4> gOutput : register(u0);
 
@@ -97,6 +99,7 @@ float3 linearToSrgb(float3 c)
     return srgb;
 }
 
+// 4.3.b Ray-Generation Shader
 [shader("raygeneration")]
 void rayGen()
 {  
@@ -105,17 +108,19 @@ void rayGen()
     gOutput[launchIndex.xy] = float4(col, 1);
 }
 
+// 4.4.a Miss - Shader
 struct Payload
 {
     bool hit;
 };
-
+// 4.4.b Miss - Shader
 [shader("miss")]
 void miss(inout Payload payload)
 {
     payload.hit = false;
 }
 
+// 4.5 Hit-Group
 [shader("closesthit")]
 void chs(inout Payload payload, in BuiltInTriangleIntersectionAttributes attribs)
 {
@@ -200,12 +205,13 @@ struct BuiltInTriangleIntersectionAttributes
 ```
 We will see how to use these attributes in tutorial 7.
 
-## Creating the RT Pipeline State Object
+## 4.6 Creating the RT Pipeline State Object
 Now that we learnt about the new shader types, we can create our RTPSO. As mentioned before, creating an RTPSO is different from the way we created PSOs in DX12. Instead of a struct similar to D3D12_GRAPHICS_PIPELINE_STATE_DESC, we are going to build an array of D3D12_STATE_SUBOBJECT. Each sub-object describes a single element of the state. Most sub-objects reference other data structures, so we need to make sure all the referenced objects are valid when we call CreateStateObject(). For that reason, we are going to create a simple abstraction for each sub-object type.
 
 Let’s go over the code in createRtPipelineState().
 ```c++
-std::array&lt;D3D12_STATE_SUBOBJECT, 10&gt; subobjects;
+// 4.6.a
+std::array<D3D12_STATE_SUBOBJECT, 10> subobjects;
 ```
 
 First, we allocate an array containing 10 sub-objects. We will see why 10 as we progress through the tutorial.
@@ -213,14 +219,16 @@ First, we allocate an array containing 10 sub-objects. We will see why 10 as we 
 This is our abstraction for a sub-object of type D3D12_STATE_SUBOBJECT_TYPE_DXIL_LIBRARY. 
 Let’s start from the struct members:
 ```c++
+// 4.6.c
 D3D12_DXIL_LIBRARY_DESC dxilLibDesc = {};
 D3D12_STATE_SUBOBJECT stateSubobject{};
 ID3DBlobPtr pShaderBlob;
-std::vector&lt;D3D12_EXPORT_DESC&gt; exportDesc;
-std::vector&lt;std::wstring&gt; exportName;
+std::vector<D3D12_EXPORT_DESC> exportDesc;
+std::vector<std::wstring> exportName;
 ```
 As you can see, we store a bunch of D3D12 objects. As we will see in a second, a DXIL library sub-objects needs to reference multiple structs and we need to make sure they are valid when we create the RTPSO. 
 ```c++
+// 4.6.d
 DxilLibrary(ID3DBlobPtr pBlob, const WCHAR* entryPoint[], uint32_t entryPointCount) :
 ```
 
@@ -228,12 +236,14 @@ The library accepts a single ID3DBlob object which contains an SM6.1 library. Th
 
 Next, we will initialize the D3D12_STATE_SUBOBJECT. pDesc has a void* type, so we need to make sure we assign the right data structure to it. In this case, it’s a pointer to D3D12_DXIL_LIBRARY_DESC.
 ```c++
+// 4.6.e
 stateSubobject.Type = D3D12_STATE_SUBOBJECT_TYPE_DXIL_LIBRARY;
 stateSubobject.pDesc = &amp;dxilLibDesc;
 ```
 
 Next, we clear the library desc and allocate space for the export desc and export names.
 ```c++
+// 4.6.f
 dxilLibDesc = {};
 exportDesc.resize(entryPointCount);
 exportName.resize(entryPointCount);
@@ -242,59 +252,108 @@ exportName.resize(entryPointCount);
 
 Now, assuming pBlob is not null, we can initialize the D3D12_DXIL_LIBRARY_DESC object.
 ```c++
+// 4.6.g
 dxilLibDesc.DXILLibrary.pShaderBytecode = pBlob-&gt;GetBufferPointer();
 dxilLibDesc.DXILLibrary.BytecodeLength = pBlob-&gt;GetBufferSize();
 dxilLibDesc.NumExports = entryPointCount;
 dxilLibDesc.pExports = exportDesc.data();
 ```
 
-
 We need to set the blob address, blob size, number of exports (AKA entry-points) and a pointer to the array of export-desc. Since we already resized our exportDesc vector, we know that the address will not change. Take care when dynamically resizing vectors, it’s not uncommon to forget that the address changes which makes pExports invalid.
 
 We then go over the entry-points and initialize the D3D12_EXPORT_DESC vector.
 ```c++
-for (uint32_t i = 0; i &lt; entryPointCount; i++)
+// 4.6.h
+for (uint32_t i = 0; i < entryPointCount; i++)
 {
-exportName[i] = entryPoint[i];
-exportDesc[i].Name = exportName[i].c_str();
-exportDesc[i].Flags = D3D12_EXPORT_FLAG_NONE;
-exportDesc[i].ExportToRename = nullptr;
+    exportName[i] = entryPoint[i];
+    exportDesc[i].Name = exportName[i].c_str();
+    exportDesc[i].Flags = D3D12_EXPORT_FLAG_NONE;
+    exportDesc[i].ExportToRename = nullptr;
 }
 ```
-
-
-
 
 2 things to note:
 * We cache the entry-point name into a pre-allocated member vector of strings.
 * We set ExportToRename to nullptr. Later we will see that we need a way to identify each shader inside a state-object. This is usually done by passing the entry-point name to the required function. There could be cases where shaders from different blobs share the same entry-point name, making the identification ambiguous. To resolve this, we can use ExportToRename to give each shader a unique name. In our case, we set it to nullptr since each shader has a unique-entry point name.
+```c++
+// 4.6.b DxilLibrary
+struct DxilLibrary
+{
+    // 4.6.d
+    DxilLibrary(ID3DBlobPtr pBlob, const WCHAR* entryPoint[], uint32_t entryPointCount) : pShaderBlob(pBlob)
+    {
+        // 4.6.e
+        stateSubobject.Type = D3D12_STATE_SUBOBJECT_TYPE_DXIL_LIBRARY;
+        stateSubobject.pDesc = &dxilLibDesc;
 
- 
+        // 4.6.f
+        dxilLibDesc = {};
+        exportDesc.resize(entryPointCount);
+        exportName.resize(entryPointCount);
+        if (pBlob)
+        {
+            // 4.6.g
+            dxilLibDesc.DXILLibrary.pShaderBytecode = pBlob->GetBufferPointer();
+            dxilLibDesc.DXILLibrary.BytecodeLength = pBlob->GetBufferSize();
+            dxilLibDesc.NumExports = entryPointCount;
+            dxilLibDesc.pExports = exportDesc.data();
+
+            // 4.6.h
+            for (uint32_t i = 0; i < entryPointCount; i++)
+            {
+                exportName[i] = entryPoint[i];
+                exportDesc[i].Name = exportName[i].c_str();
+                exportDesc[i].Flags = D3D12_EXPORT_FLAG_NONE;
+                exportDesc[i].ExportToRename = nullptr;
+            }
+        }
+    };
+
+    DxilLibrary() : DxilLibrary(nullptr, nullptr, 0) {}
+
+    // 4.6.c
+    D3D12_DXIL_LIBRARY_DESC dxilLibDesc = {};
+    D3D12_STATE_SUBOBJECT stateSubobject{};
+    ID3DBlobPtr pShaderBlob;
+    std::vector<D3D12_EXPORT_DESC> exportDesc;
+    std::vector<std::wstring> exportName;
+};
+```
+
 Back in createRtPipelineState(), we create a DxilLibrary  object and add it to the sub-object array.
 ```c++
 // Create the DXIL library
 DxilLibrary dxilLib = createDxilLibrary();
 subobjects[index++] = dxilLib.stateSubobject;
 ```
-
-
 We got ourselves our first sub-object object! As you can see, there’s a lot of memory management code here. This is a recurring theme with the new method of creating RTPSO.
-## HitProgram
+
+## 4.7 HitProgram
 HitProgram is an abstraction over a D3D12_STATE_SUBOBJECT_TYPE_HIT_GROUP sub-object. A hit-group is a collection of intersection, any-hit and closest-hit shaders, at most one of each type. Since we don’t use custom intersection-shaders in these tutorials, our HitProgram object only accepts AHS and CHS entry point name.
 ```c++
-HitProgram(LPCWSTR ahsExport, LPCWSTR chsExport, const std::wstring&amp; name) : exportName(name)
+// 4.7 HitProgram
+struct HitProgram
 {
-desc = {};
-desc.AnyHitShaderImport = ahsExport;
-desc.ClosestHitShaderImport = chsExport;
-desc.HitGroupExport = exportName.c_str();
-subObject.Type = D3D12_STATE_SUBOBJECT_TYPE_HIT_GROUP;
-subObject.pDesc = &amp;desc;
-}
+    HitProgram(LPCWSTR ahsExport, LPCWSTR chsExport, const std::wstring& name) : exportName(name)
+    {
+        desc = {};
+        desc.AnyHitShaderImport = ahsExport;
+        desc.ClosestHitShaderImport = chsExport;
+        desc.HitGroupExport = exportName.c_str();
+
+        subObject.Type = D3D12_STATE_SUBOBJECT_TYPE_HIT_GROUP;
+        subObject.pDesc = &desc;
+    }
+
+    std::wstring exportName;
+    D3D12_HIT_GROUP_DESC desc;
+    D3D12_STATE_SUBOBJECT subObject;
+};
 ```
 The code should be self-explanatory. The AnyHitShaderImport and ClosestHitShaderImport reference export names declared in the DxilLibrary we created. HitGroupExport is a unique name we will use to identify this hit-group in subsequent calls.
 
-## LocalRootSignature
+## 4.8 LocalRootSignature
 DXR introduces a new concept called Local Root Signature (LRS). In graphics and compute pipelines, we have a single, global root-signature used by all programs. For ray-tracing, in addition to that root-signature, we can create local root-signatures and bind them to specific shaders. As we will see in the next tutorial, the size of the root-signature affects the size of the Shader Binding Table and LRSs allow us to optimize the SBT.
 
 Looking at createRayGenRootDesc(), you can see that creating an LRS is similar to a global root-signature generation, except we need to set the D3D12_ROOT_SIGNATURE_FLAG_LOCAL_ROOT_SIGNATURE flag.
