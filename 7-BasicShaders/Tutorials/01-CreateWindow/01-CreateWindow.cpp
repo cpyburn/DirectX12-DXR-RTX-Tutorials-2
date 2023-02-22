@@ -719,7 +719,7 @@ void Tutorial01::createRtPipelineState()
     subobjects[index++] = missHitRootAssociation.subobject; // 5 Associate Root Sig to Miss and CHS
 
     // 4.9.a Bind the payload size to the programs
-    ShaderConfig shaderConfig(sizeof(float) * 2, sizeof(float) * 1);
+    ShaderConfig shaderConfig(sizeof(float) * 2, sizeof(float) * 3); // 7.1 Payload
     subobjects[index] = shaderConfig.subobject; // 6 Shader Config
 
     // 4.9.b
@@ -729,7 +729,7 @@ void Tutorial01::createRtPipelineState()
     subobjects[index++] = configAssociation.subobject; // 7 Associate Shader Config to Miss, CHS, RGS
 
     // 4.10.a Create the pipeline config
-    PipelineConfig config(0);
+    PipelineConfig config(1); // 7.0.a
     subobjects[index++] = config.subobject; // 8
 
     // 4.11.a Create the global root signature and store the empty signature
