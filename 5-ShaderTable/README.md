@@ -36,7 +36,14 @@ The second role is required because:
 Note that the API allows to use multiple shader-tables in a single DispatchRays() call. For simplicity, we
 will use a single shader-table in this tutorial.
 
-## Shader Table Records
+## 5.0 Shader Table Records 
+```c++
+// Tutorial 05 01-CreateWindow.h
+void createShaderTable();
+ID3D12ResourcePtr mpShaderTable;
+uint32_t mShaderTableEntrySize = 0;
+```
+
 Each shader-table record has 2 sections. It begins with an opaque program identifier (obtained by calling
 ID3D12StateObjectPropertiesPtr::GetShaderIdentifier()) followed by a root table containing the
 shader resource bindings.
@@ -127,5 +134,57 @@ memcpy(pHitEntry, pRtsoProps-&gt;GetShaderIdentifier(kHitGroup), D3D12_SHADER_ID
 
 The program identifier entry must be placed at the beginning of the record. Also note that we didn’t
 initialize the root-table for the RayGen shader yet.
+
+```c++
+// 5.0 Shader Table Records 
+void Tutorial01::createShaderTable()
+{
+    /** The shader-table layout is as follows:
+        Entry 0 - Ray-gen program
+        Entry 1 - Miss program
+        Entry 2 - Hit program
+        All entries in the shader-table must have the same size, so we will choose it base on the largest required entry.
+        The ray-gen program requires the largest entry - sizeof(program identifier) + 8 bytes for a descriptor-table.
+        The entry size must be aligned up to D3D12_RAYTRACING_SHADER_RECORD_BYTE_ALIGNMENT
+    */
+
+    // Calculate the size and create the buffer
+    mShaderTableEntrySize = D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES;
+    mShaderTableEntrySize += 8; // The ray-gen's descriptor table
+    mShaderTableEntrySize = align_to(D3D12_RAYTRACING_SHADER_RECORD_BYTE_ALIGNMENT, mShaderTableEntrySize);
+    uint32_t shaderTableSize = mShaderTableEntrySize * 3;  // We have 3 programs and a single geometry, so we need 3 entries (we’ll get to why the number of entries depends on the geometry count in later tutorials).
+
+    // For simplicity, we create the shader-table on the upload heap. You can also create it on the default heap
+    mpShaderTable = createBuffer(mpDevice, shaderTableSize, D3D12_RESOURCE_FLAG_NONE, D3D12_RESOURCE_STATE_GENERIC_READ, kUploadHeapProps);
+
+    // Map the buffer
+    uint8_t* pData;
+    d3d_call(mpShaderTable->Map(0, nullptr, (void**)&pData));
+
+    MAKE_SMART_COM_PTR(ID3D12StateObjectProperties);
+    ID3D12StateObjectPropertiesPtr pRtsoProps;
+    mpPipelineState->QueryInterface(IID_PPV_ARGS(&pRtsoProps));
+
+    // Entry 0 - ray-gen program ID and descriptor data
+    memcpy(pData, pRtsoProps->GetShaderIdentifier(kRayGenShader), D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES);
+
+    // This is where we need to set the descriptor data for the ray-gen shader. We'll get to it in the next tutorial
+
+    // Entry 1 - miss program
+    memcpy(pData + mShaderTableEntrySize, pRtsoProps->GetShaderIdentifier(kMissShader), D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES);
+
+    // Entry 2 - hit program
+    uint8_t* pHitEntry = pData + mShaderTableEntrySize * 2; // +2 skips the ray-gen and miss entries
+    memcpy(pHitEntry, pRtsoProps->GetShaderIdentifier(kHitGroup), D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES);
+
+    // Unmap
+    mpShaderTable->Unmap(0, nullptr);
+}
+```
+
+## 5.1 onLoad
+```c++
+createShaderTable(); // Tutorial 05
+```
 
 That’s pretty much it. We got ourselves a Shader Table!
