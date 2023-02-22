@@ -6,4 +6,7 @@
   <ItemGroup>
     <ClInclude Include="01-CreateWindow.h" />
   </ItemGroup>
+  <ItemGroup>
+    <None Include="Data\04-Shaders.hlsl" />
+  </ItemGroup>
 </Project>

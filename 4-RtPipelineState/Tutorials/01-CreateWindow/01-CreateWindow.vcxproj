@@ -21,6 +21,11 @@
       <Project>{3b602f0e-3834-4f73-b97d-7dfc91597a98}</Project>
     </ProjectReference>
   </ItemGroup>
+  <ItemGroup>
+    <None Include="Data\04-Shaders.hlsl">
+      <FileType>Document</FileType>
+    </None>
+  </ItemGroup>
   <PropertyGroup Label="Globals">
     <ProjectGuid>{70624B07-6050-4BB7-BBBB-0AF66D3B99C8}</ProjectGuid>
     <Keyword>Win32Proj</Keyword>

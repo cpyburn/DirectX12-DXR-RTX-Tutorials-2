@@ -25,56 +25,49 @@
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ***************************************************************************/
-#pragma once
-#include "Framework.h"
 
-class Tutorial01 : public Tutorial
+// 4.2 Ray - Tracing Shaders 04 - Shaders.hlsl
+
+// 4.3.a Ray-Generation Shader
+RaytracingAccelerationStructure gRtScene : register(t0);
+RWTexture2D<float4> gOutput : register(u0);
+
+float3 linearToSrgb(float3 c)
 {
-public:
-    // Tutorial 1 code
-    void onLoad(HWND winHandle, uint32_t winWidth, uint32_t winHeight) override;
-    void onFrameRender() override;
-    void onShutdown() override;
-private:
-    // Tutorial 2 code
-    void initDXR(HWND winHandle, uint32_t winWidth, uint32_t winHeight);
-    uint32_t beginFrame();
-    void endFrame(uint32_t rtvIndex);
-    HWND mHwnd = nullptr;
-    ID3D12Device5Ptr mpDevice;
-    ID3D12CommandQueuePtr mpCmdQueue;
-    IDXGISwapChain3Ptr mpSwapChain;
-    uvec2 mSwapChainSize;
-    ID3D12GraphicsCommandList4Ptr mpCmdList;
-    ID3D12FencePtr mpFence;
-    HANDLE mFenceEvent;
-    uint64_t mFenceValue = 0;
+    // Based on http://chilliant.blogspot.com/2012/08/srgb-approximations-for-hlsl.html
+    float3 sq1 = sqrt(c);
+    float3 sq2 = sqrt(sq1);
+    float3 sq3 = sqrt(sq2);
+    float3 srgb = 0.662002687 * sq1 + 0.684122060 * sq2 - 0.323583601 * sq3 - 0.0225411470 * c;
+    return srgb;
+}
 
-    struct
-    {
-        ID3D12CommandAllocatorPtr pCmdAllocator;
-        ID3D12ResourcePtr pSwapChainBuffer;
-        D3D12_CPU_DESCRIPTOR_HANDLE rtvHandle;
-    } mFrameObjects[kDefaultSwapChainBuffers];
+// 4.3.b Ray-Generation Shader
+[shader("raygeneration")]
+void rayGen()
+{  
+    uint3 launchIndex = DispatchRaysIndex();
+    float3 col = linearToSrgb(float3(0.4, 0.6, 0.2));
+    gOutput[launchIndex.xy] = float4(col, 1);
+}
 
-    // Heap data
-    struct HeapData
-    {
-        ID3D12DescriptorHeapPtr pHeap;
-        uint32_t usedEntries = 0;
-    };
-    HeapData mRtvHeap;
-    static const uint32_t kRtvHeapSize = 3;
-
-    // Tutorial 03
-    void createAccelerationStructures();
-    ID3D12ResourcePtr mpVertexBuffer;
-    ID3D12ResourcePtr mpTopLevelAS;
-    ID3D12ResourcePtr mpBottomLevelAS;
-    uint64_t mTlasSize = 0;
-
-    // Tutorial 04
-    void createRtPipelineState();
-    ID3D12StateObjectPtr mpPipelineState;
-    ID3D12RootSignaturePtr mpEmptyRootSig;
+// 4.4.a Miss - Shader
+struct Payload
+{
+    bool hit;
 };
+// 4.4.b Miss - Shader
+[shader("miss")]
+void miss(inout Payload payload)
+{
+    payload.hit = false;
+}
+
+// 4.5 Hit-Group
+[shader("closesthit")]
+void chs(inout Payload payload, in BuiltInTriangleIntersectionAttributes attribs)
+{
+    payload.hit = true;
+}
+
+

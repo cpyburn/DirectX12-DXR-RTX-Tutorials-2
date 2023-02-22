@@ -403,6 +403,345 @@ void Tutorial01::createAccelerationStructures()
     mpBottomLevelAS = bottomLevelBuffers.pResult;
 }
 
+// 4.1 Shader-Libraries
+#include <sstream>
+static dxc::DxcDllSupport gDxcDllHelper;
+MAKE_SMART_COM_PTR(IDxcCompiler);
+MAKE_SMART_COM_PTR(IDxcLibrary);
+MAKE_SMART_COM_PTR(IDxcBlobEncoding);
+MAKE_SMART_COM_PTR(IDxcOperationResult);
+
+ID3DBlobPtr compileLibrary(const WCHAR* filename, const WCHAR* targetString)
+{
+    // Initialize the helper
+    d3d_call(gDxcDllHelper.Initialize());
+    IDxcCompilerPtr pCompiler;
+    IDxcLibraryPtr pLibrary;
+    d3d_call(gDxcDllHelper.CreateInstance(CLSID_DxcCompiler, &pCompiler));
+    d3d_call(gDxcDllHelper.CreateInstance(CLSID_DxcLibrary, &pLibrary));
+
+    // Open and read the file
+    std::ifstream shaderFile(filename);
+    if (shaderFile.good() == false)
+    {
+        msgBox("Can't open file " + wstring_2_string(std::wstring(filename)));
+        return nullptr;
+    }
+    std::stringstream strStream;
+    strStream << shaderFile.rdbuf();
+    std::string shader = strStream.str();
+
+    // Create blob from the string
+    IDxcBlobEncodingPtr pTextBlob;
+    d3d_call(pLibrary->CreateBlobWithEncodingFromPinned((LPBYTE)shader.c_str(), (uint32_t)shader.size(), 0, &pTextBlob));
+
+    // Compile
+    IDxcOperationResultPtr pResult;
+    d3d_call(pCompiler->Compile(pTextBlob, filename, L"", targetString, nullptr, 0, nullptr, 0, nullptr, &pResult));
+
+    // Verify the result
+    HRESULT resultCode;
+    d3d_call(pResult->GetStatus(&resultCode));
+    if (FAILED(resultCode))
+    {
+        IDxcBlobEncodingPtr pError;
+        d3d_call(pResult->GetErrorBuffer(&pError));
+        std::string log = convertBlobToString(pError.GetInterfacePtr());
+        msgBox("Compiler error:\n" + log);
+        return nullptr;
+    }
+
+    MAKE_SMART_COM_PTR(IDxcBlob);
+    IDxcBlobPtr pBlob;
+    d3d_call(pResult->GetResult(&pBlob));
+    return pBlob;
+}
+
+// 4.6.b DxilLibrary
+struct DxilLibrary
+{
+    // 4.6.d
+    DxilLibrary(ID3DBlobPtr pBlob, const WCHAR* entryPoint[], uint32_t entryPointCount) : pShaderBlob(pBlob)
+    {
+        // 4.6.e
+        stateSubobject.Type = D3D12_STATE_SUBOBJECT_TYPE_DXIL_LIBRARY;
+        stateSubobject.pDesc = &dxilLibDesc;
+
+        // 4.6.f
+        dxilLibDesc = {};
+        exportDesc.resize(entryPointCount);
+        exportName.resize(entryPointCount);
+        if (pBlob)
+        {
+            // 4.6.g
+            dxilLibDesc.DXILLibrary.pShaderBytecode = pBlob->GetBufferPointer();
+            dxilLibDesc.DXILLibrary.BytecodeLength = pBlob->GetBufferSize();
+            dxilLibDesc.NumExports = entryPointCount;
+            dxilLibDesc.pExports = exportDesc.data();
+
+            // 4.6.h
+            for (uint32_t i = 0; i < entryPointCount; i++)
+            {
+                exportName[i] = entryPoint[i];
+                exportDesc[i].Name = exportName[i].c_str();
+                exportDesc[i].Flags = D3D12_EXPORT_FLAG_NONE;
+                exportDesc[i].ExportToRename = nullptr;
+            }
+        }
+    };
+
+    DxilLibrary() : DxilLibrary(nullptr, nullptr, 0) {}
+
+    // 4.6.c
+    D3D12_DXIL_LIBRARY_DESC dxilLibDesc = {};
+    D3D12_STATE_SUBOBJECT stateSubobject{};
+    ID3DBlobPtr pShaderBlob;
+    std::vector<D3D12_EXPORT_DESC> exportDesc;
+    std::vector<std::wstring> exportName;
+};
+
+// 4.6.i
+static const WCHAR* kRayGenShader = L"rayGen";
+static const WCHAR* kMissShader = L"miss";
+static const WCHAR* kClosestHitShader = L"chs";
+static const WCHAR* kHitGroup = L"HitGroup";
+
+// 4.6.j
+DxilLibrary createDxilLibrary()
+{
+    // Compile the shader
+    ID3DBlobPtr pDxilLib = compileLibrary(L"Data/04-Shaders.hlsl", L"lib_6_3");
+    const WCHAR* entryPoints[] = { kRayGenShader, kMissShader, kClosestHitShader };
+    return DxilLibrary(pDxilLib, entryPoints, arraysize(entryPoints));
+}
+
+// 4.7.a HitProgram
+struct HitProgram
+{
+    HitProgram(LPCWSTR ahsExport, LPCWSTR chsExport, const std::wstring& name) : exportName(name)
+    {
+        desc = {};
+        desc.AnyHitShaderImport = ahsExport;
+        desc.ClosestHitShaderImport = chsExport;
+        desc.HitGroupExport = exportName.c_str();
+
+        subObject.Type = D3D12_STATE_SUBOBJECT_TYPE_HIT_GROUP;
+        subObject.pDesc = &desc;
+    }
+
+    std::wstring exportName;
+    D3D12_HIT_GROUP_DESC desc;
+    D3D12_STATE_SUBOBJECT subObject;
+};
+
+// 4.8.a RootSignature create helper class
+ID3D12RootSignaturePtr createRootSignature(ID3D12Device5Ptr pDevice, const D3D12_ROOT_SIGNATURE_DESC& desc)
+{
+    ID3DBlobPtr pSigBlob;
+    ID3DBlobPtr pErrorBlob;
+    HRESULT hr = D3D12SerializeRootSignature(&desc, D3D_ROOT_SIGNATURE_VERSION_1, &pSigBlob, &pErrorBlob);
+    if (FAILED(hr))
+    {
+        std::string msg = convertBlobToString(pErrorBlob.GetInterfacePtr());
+        msgBox(msg);
+        return nullptr;
+    }
+    ID3D12RootSignaturePtr pRootSig;
+    d3d_call(pDevice->CreateRootSignature(0, pSigBlob->GetBufferPointer(), pSigBlob->GetBufferSize(), IID_PPV_ARGS(&pRootSig)));
+    return pRootSig;
+}
+
+// 4.8.b LocalRootSignature
+struct LocalRootSignature
+{
+    LocalRootSignature(ID3D12Device5Ptr pDevice, const D3D12_ROOT_SIGNATURE_DESC& desc)
+    {
+        pRootSig = createRootSignature(pDevice, desc);
+        pInterface = pRootSig.GetInterfacePtr();
+        subobject.pDesc = &pInterface;
+        subobject.Type = D3D12_STATE_SUBOBJECT_TYPE_LOCAL_ROOT_SIGNATURE;
+    }
+    ID3D12RootSignaturePtr pRootSig;
+    ID3D12RootSignature* pInterface = nullptr;
+    D3D12_STATE_SUBOBJECT subobject = {};
+};
+
+// 4.8.c
+struct RootSignatureDesc
+{
+    D3D12_ROOT_SIGNATURE_DESC desc = {};
+    std::vector<D3D12_DESCRIPTOR_RANGE> range;
+    std::vector<D3D12_ROOT_PARAMETER> rootParams;
+};
+
+// 4.8.d
+RootSignatureDesc createRayGenRootDesc()
+{
+    // Create the root-signature
+    RootSignatureDesc desc;
+    desc.range.resize(2);
+    // gOutput
+    desc.range[0].BaseShaderRegister = 0;
+    desc.range[0].NumDescriptors = 1;
+    desc.range[0].RegisterSpace = 0;
+    desc.range[0].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_UAV;
+    desc.range[0].OffsetInDescriptorsFromTableStart = 0;
+
+    // gRtScene
+    desc.range[1].BaseShaderRegister = 0;
+    desc.range[1].NumDescriptors = 1;
+    desc.range[1].RegisterSpace = 0;
+    desc.range[1].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+    desc.range[1].OffsetInDescriptorsFromTableStart = 1;
+
+    desc.rootParams.resize(1);
+    desc.rootParams[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+    desc.rootParams[0].DescriptorTable.NumDescriptorRanges = 2;
+    desc.rootParams[0].DescriptorTable.pDescriptorRanges = desc.range.data();
+
+    // Create the desc
+    desc.desc.NumParameters = 1;
+    desc.desc.pParameters = desc.rootParams.data();
+    desc.desc.Flags = D3D12_ROOT_SIGNATURE_FLAG_LOCAL_ROOT_SIGNATURE;
+
+    return desc;
+}
+
+// 4.8
+struct ExportAssociation
+{
+    ExportAssociation(const WCHAR* exportNames[], uint32_t exportCount, const D3D12_STATE_SUBOBJECT* pSubobjectToAssociate)
+    {
+        association.NumExports = exportCount;
+        association.pExports = exportNames;
+        association.pSubobjectToAssociate = pSubobjectToAssociate;
+
+        subobject.Type = D3D12_STATE_SUBOBJECT_TYPE_SUBOBJECT_TO_EXPORTS_ASSOCIATION;
+        subobject.pDesc = &association;
+    }
+
+    D3D12_STATE_SUBOBJECT subobject = {};
+    D3D12_SUBOBJECT_TO_EXPORTS_ASSOCIATION association = {};
+};
+
+// 4.9 ShaderConfig
+struct ShaderConfig
+{
+    ShaderConfig(uint32_t maxAttributeSizeInBytes, uint32_t maxPayloadSizeInBytes)
+    {
+        shaderConfig.MaxAttributeSizeInBytes = maxAttributeSizeInBytes;
+        shaderConfig.MaxPayloadSizeInBytes = maxPayloadSizeInBytes;
+
+        subobject.Type = D3D12_STATE_SUBOBJECT_TYPE_RAYTRACING_SHADER_CONFIG;
+        subobject.pDesc = &shaderConfig;
+    }
+
+    D3D12_RAYTRACING_SHADER_CONFIG shaderConfig = {};
+    D3D12_STATE_SUBOBJECT subobject = {};
+};
+
+// 4.10 PipelineConfig
+struct PipelineConfig
+{
+    PipelineConfig(uint32_t maxTraceRecursionDepth)
+    {
+        config.MaxTraceRecursionDepth = maxTraceRecursionDepth;
+
+        subobject.Type = D3D12_STATE_SUBOBJECT_TYPE_RAYTRACING_PIPELINE_CONFIG;
+        subobject.pDesc = &config;
+    }
+
+    D3D12_RAYTRACING_PIPELINE_CONFIG config = {};
+    D3D12_STATE_SUBOBJECT subobject = {};
+};
+
+// 4.11 GlobalRootSignature
+struct GlobalRootSignature
+{
+    GlobalRootSignature(ID3D12Device5Ptr pDevice, const D3D12_ROOT_SIGNATURE_DESC& desc)
+    {
+        pRootSig = createRootSignature(pDevice, desc);
+        pInterface = pRootSig.GetInterfacePtr();
+        subobject.pDesc = &pInterface;
+        subobject.Type = D3D12_STATE_SUBOBJECT_TYPE_GLOBAL_ROOT_SIGNATURE;
+    }
+    ID3D12RootSignaturePtr pRootSig;
+    ID3D12RootSignature* pInterface = nullptr;
+    D3D12_STATE_SUBOBJECT subobject = {};
+};
+
+// 4.6 Creating the RT Pipeline State Object
+void Tutorial01::createRtPipelineState()
+{
+    // Need 10 subobjects:
+    //  1 for the DXIL library
+    //  1 for hit-group
+    //  2 for RayGen root-signature (root-signature and the subobject association)
+    //  2 for the root-signature shared between miss and hit shaders (signature and association)
+    //  2 for shader config (shared between all programs. 1 for the config, 1 for association)
+    //  1 for pipeline config
+    //  1 for the global root signature
+
+    // 4.6.a
+    std::array<D3D12_STATE_SUBOBJECT, 10> subobjects;
+    uint32_t index = 0;
+
+    // 4.6.k Create the DXIL library
+    DxilLibrary dxilLib = createDxilLibrary();
+    subobjects[index++] = dxilLib.stateSubobject; // 0 Library
+    // 4.7.b createRtPipelineState
+    HitProgram hitProgram(nullptr, kClosestHitShader, kHitGroup);
+    subobjects[index++] = hitProgram.subObject; // 1 Hit Group
+
+    // 4.8.e Create the ray-gen root-signature and association
+    LocalRootSignature rgsRootSignature(mpDevice, createRayGenRootDesc().desc);
+    subobjects[index] = rgsRootSignature.subobject; // 2 RayGen Root Sig
+
+    // 4.8.a createRtPipelineState
+    uint32_t rgsRootIndex = index++; // 2
+    ExportAssociation rgsRootAssociation(&kRayGenShader, 1, &(subobjects[rgsRootIndex]));
+    subobjects[index++] = rgsRootAssociation.subobject; // 3 Associate Root Sig to RGS
+
+    // 4.8.b Create the miss- and hit-programs root-signature and association
+    D3D12_ROOT_SIGNATURE_DESC emptyDesc = {};
+    emptyDesc.Flags = D3D12_ROOT_SIGNATURE_FLAG_LOCAL_ROOT_SIGNATURE;
+    LocalRootSignature hitMissRootSignature(mpDevice, emptyDesc);
+    subobjects[index] = hitMissRootSignature.subobject; // 4 Root Sig to be shared between Miss and CHS
+
+    // 4.8.c
+    uint32_t hitMissRootIndex = index++; // 4
+    const WCHAR* missHitExportName[] = { kMissShader, kClosestHitShader };
+    ExportAssociation missHitRootAssociation(missHitExportName, arraysize(missHitExportName), &(subobjects[hitMissRootIndex]));
+    subobjects[index++] = missHitRootAssociation.subobject; // 5 Associate Root Sig to Miss and CHS
+
+    // 4.9.a Bind the payload size to the programs
+    ShaderConfig shaderConfig(sizeof(float) * 2, sizeof(float) * 1);
+    subobjects[index] = shaderConfig.subobject; // 6 Shader Config
+
+    // 4.9.b
+    uint32_t shaderConfigIndex = index++; // 6
+    const WCHAR* shaderExports[] = { kMissShader, kClosestHitShader, kRayGenShader };
+    ExportAssociation configAssociation(shaderExports, arraysize(shaderExports), &(subobjects[shaderConfigIndex]));
+    subobjects[index++] = configAssociation.subobject; // 7 Associate Shader Config to Miss, CHS, RGS
+
+    // 4.10.a Create the pipeline config
+    PipelineConfig config(0);
+    subobjects[index++] = config.subobject; // 8
+
+    // 4.11.a Create the global root signature and store the empty signature
+    GlobalRootSignature root(mpDevice, {});
+    mpEmptyRootSig = root.pRootSig;
+    subobjects[index++] = root.subobject; // 9
+
+    // 4.12 Create the state
+    D3D12_STATE_OBJECT_DESC desc;
+    desc.NumSubobjects = index; // 10
+    desc.pSubobjects = subobjects.data();
+    desc.Type = D3D12_STATE_OBJECT_TYPE_RAYTRACING_PIPELINE;
+
+    d3d_call(mpDevice->CreateStateObject(&desc, IID_PPV_ARGS(&mpPipelineState)));
+}
+
 //////////////////////////////////////////////////////////////////////////
 // Callbacks
 //////////////////////////////////////////////////////////////////////////
@@ -411,6 +750,7 @@ void Tutorial01::onLoad(HWND winHandle, uint32_t winWidth, uint32_t winHeight)
     // 2.11 onLoad
     initDXR(winHandle, winWidth, winHeight); // Tutorial 02
     createAccelerationStructures();             // Tutorial 03
+    createRtPipelineState();                    // Tutorial 04
 }
 
 void Tutorial01::onFrameRender()
