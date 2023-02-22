@@ -196,13 +196,17 @@ void Tutorial01::initDXR(HWND winHandle, uint32_t winWidth, uint32_t winHeight)
 // 2.9 beginFrame
 uint32_t Tutorial01::beginFrame()
 {
+    // 6.5 Bind the descriptor heaps
+    ID3D12DescriptorHeap* heaps[] = { mpSrvUavHeap };
+    mpCmdList->SetDescriptorHeaps(arraysize(heaps), heaps);
     return mpSwapChain->GetCurrentBackBufferIndex();
 }
 
 // 2.10 endFrame
 void Tutorial01::endFrame(uint32_t rtvIndex)
 {
-    resourceBarrier(mpCmdList, mFrameObjects[rtvIndex].pSwapChainBuffer, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT);
+    // 6.6 update before state D3D12_RESOURCE_STATE_COPY_DEST
+    resourceBarrier(mpCmdList, mFrameObjects[rtvIndex].pSwapChainBuffer, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PRESENT);
     mFenceValue = submitCommandList(mpCmdList, mpCmdQueue, mpFence, mFenceValue);
     mpSwapChain->Present(0, 0);
 
