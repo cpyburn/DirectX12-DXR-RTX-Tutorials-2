@@ -163,4 +163,3 @@ void chs(inout RayPayload payload, in BuiltInTriangleIntersectionAttributes attr
 Once we launch the application, we can finally see our triangle!
 
 ![image](https://user-images.githubusercontent.com/17934438/220754928-e7daed36-cd34-44cf-a028-2c551d8393df.png)
-)
