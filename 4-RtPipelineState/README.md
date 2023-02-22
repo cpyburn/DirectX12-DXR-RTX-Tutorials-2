@@ -622,5 +622,10 @@ desc.Type = D3D12_STATE_OBJECT_TYPE_RAYTRACING_PIPELINE;
 
 d3d_call(mpDevice->CreateStateObject(&desc, IID_PPV_ARGS(&mpPipelineState)));
 ```
+
+## 4.13 onLoad
+```c++
+createRtPipelineState(); // Tutorial 4
+```
 And we’re done!
 There are more details and fine-print related to how to use sub-object and create a state-objects. I strongly suggest you read the spec to get all the details, but for now we have enough to work with.
