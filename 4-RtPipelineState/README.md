@@ -469,27 +469,39 @@ RootSignatureDesc createRayGenRootDesc()
 }
 ```
 As you can see, we store the ID3D12RootSignature object into a member variable, then set its address into pDesc.
-
-Now that we created a LocalRootSignature object, we need to associate it with one of the shader. We do that using something called an Export Assoication.
-
 ```c++
 // 4.8.e Create the ray-gen root-signature and association
 LocalRootSignature rgsRootSignature(mpDevice, createRayGenRootDesc().desc);
 subobjects[index] = rgsRootSignature.subobject; // 2 RayGen Root Sig
 ```
+Now that we created a LocalRootSignature object, we need to associate it with one of the shader. We do that using something called an Export Assoication.
 
-## ExportAssociation
+## 4.9 ExportAssociation
 An ExportAssociation object binds a sub-object into shaders and hit-groups. The object itself is very simple:
 ```c++
-ExportAssociation(const WCHAR* exportNames[], uint32_t exportCount, const D3D12_STATE_SUBOBJECT*
-pSubobjectToAssociate)
+// 4.8
+struct ExportAssociation
 {
-association.NumExports = exportCount;
-association.pExports = exportNames;
-association.pSubobjectToAssociate = pSubobjectToAssociate;
-subobject.Type = D3D12_STATE_SUBOBJECT_TYPE_SUBOBJECT_TO_EXPORTS_ASSOCIATION;
-subobject.pDesc = &amp;association;
-}
+    ExportAssociation(const WCHAR* exportNames[], uint32_t exportCount, const D3D12_STATE_SUBOBJECT* pSubobjectToAssociate)
+    {
+        association.NumExports = exportCount;
+        association.pExports = exportNames;
+        association.pSubobjectToAssociate = pSubobjectToAssociate;
+
+        subobject.Type = D3D12_STATE_SUBOBJECT_TYPE_SUBOBJECT_TO_EXPORTS_ASSOCIATION;
+        subobject.pDesc = &association;
+    }
+
+    D3D12_STATE_SUBOBJECT subobject = {};
+    D3D12_SUBOBJECT_TO_EXPORTS_ASSOCIATION association = {};
+};
+```
+
+```c++
+// 4.8.a createRtPipelineState
+uint32_t rgsRootIndex = index++; // 2
+ExportAssociation rgsRootAssociation(&kRayGenShader, 1, &(subobjects[rgsRootIndex]));
+subobjects[index++] = rgsRootAssociation.subobject; // 3 Associate Root Sig to RGS
 ```
 
 There’s one important detail we must remember when creating an ExportAssociation object- pSubobjectToAssociate must point to an object which is part of the array we are passing into CreateStateObject(). Let’s look at how we use the last 2 objects and see what that means:
@@ -498,91 +510,117 @@ First, we create the local root-signature for the ray-generation shader. We then
 
 The next bit of code creates an empty local root-signature and binds it to the miss-shader and the hit-program. We need to bind an LRS for every object we export from our DxilLibrary. 
 ```c++
-// Create the miss- and hit-programs root-signature and association
+// 4.8.b Create the miss- and hit-programs root-signature and association
 D3D12_ROOT_SIGNATURE_DESC emptyDesc = {};
 emptyDesc.Flags = D3D12_ROOT_SIGNATURE_FLAG_LOCAL_ROOT_SIGNATURE;
 LocalRootSignature hitMissRootSignature(mpDevice, emptyDesc);
-subobjects[index] = hitMissRootSignature.subobject;
-uint32_t hitMissRootIndex = index++;
+subobjects[index] = hitMissRootSignature.subobject; // 4 Root Sig to be shared between Miss and CHS
+
+// 4.8.c
+uint32_t hitMissRootIndex = index++; // 4
 const WCHAR* missHitExportName[] = { kMissShader, kClosestHitShader };
-ExportAssociation missHitRootAssociation(missHitExportName, arraysize(missHitExportName),
-&amp;(subobjects[hitMissRootIndex]));
-subobjects[index++] = missHitRootAssociation.subobject;
+ExportAssociation missHitRootAssociation(missHitExportName, arraysize(missHitExportName), &(subobjects[hitMissRootIndex]));
+subobjects[index++] = missHitRootAssociation.subobject; // 5 Associate Root Sig to Miss and CHS
 ```
 An important detail to point out is that we are not using the hit group name specified earlier in the HitProgram sub-object. The official Windows 10 DXR release initially included an issue preventing associations with hit group names from working correctly. Normally, we would prefer to use hitProgram.exportName.c_str(), but until this is fixed you must include every entry point in the hit group when creating ExportAssociation objects. Currently, we only have one closest-hit shader.
 
-## ShaderConfig
+## 4.9 ShaderConfig
 Next bit is the shader configuration. There are 2 values we need to set:
 * The payload size in bytes. This is the size of the payload struct we defined in the HLSL. In our case the payload is a single bool (4-bytes in HLSL).
 * The attributes size in bytes. This is the size of the data the hit-shader accepts as its intersection-attributes parameter. For the built-in intersection shader, the attributes size is 8-bytes (2 floats).
 ```c++
-ShaderConfig(uint32_t maxAttributeSizeInBytes, uint32_t maxPayloadSizeInBytes)
+// 4.9 ShaderConfig
+struct ShaderConfig
 {
-shaderConfig.MaxAttributeSizeInBytes = maxAttributeSizeInBytes;
-shaderConfig.MaxPayloadSizeInBytes = maxPayloadSizeInBytes;
-subobject.Type = D3D12_STATE_SUBOBJECT_TYPE_RAYTRACING_SHADER_CONFIG;
-subobject.pDesc = &amp;shaderConfig;
-}
+    ShaderConfig(uint32_t maxAttributeSizeInBytes, uint32_t maxPayloadSizeInBytes)
+    {
+        shaderConfig.MaxAttributeSizeInBytes = maxAttributeSizeInBytes;
+        shaderConfig.MaxPayloadSizeInBytes = maxPayloadSizeInBytes;
+
+        subobject.Type = D3D12_STATE_SUBOBJECT_TYPE_RAYTRACING_SHADER_CONFIG;
+        subobject.pDesc = &shaderConfig;
+    }
+
+    D3D12_RAYTRACING_SHADER_CONFIG shaderConfig = {};
+    D3D12_STATE_SUBOBJECT subobject = {};
+};
 ```
 The code should be self-explanatory. Once we create a ShaderConfig object, we need to associate it with our shaders, which is what the following snippet does.
 ```c++
-// Bind the payload size to the programs
-ShaderConfig shaderConfig(sizeof(float)*2, sizeof(float)*1);
-subobjects[index] = shaderConfig.subobject;
-uint32_t shaderConfigIndex = index++;
-const WCHAR* shaderExports[] = { kMissShader, kClosestHitShader, kRayGenShader };
-ExportAssociation configAssociation(shaderExports, arraysize(shaderExports),
-&amp;(subobjects[shaderConfigIndex]));
+    // 4.9.a Bind the payload size to the programs
+    ShaderConfig shaderConfig(sizeof(float) * 2, sizeof(float) * 1);
+    subobjects[index] = shaderConfig.subobject; // 6 Shader Config
 
-subobjects[index++] = configAssociation.subobject;
+    // 4.9.b
+    uint32_t shaderConfigIndex = index++; // 6
+    const WCHAR* shaderExports[] = { kMissShader, kClosestHitShader, kRayGenShader };
+    ExportAssociation configAssociation(shaderExports, arraysize(shaderExports), &(subobjects[shaderConfigIndex]));
+    subobjects[index++] = configAssociation.subobject; // 7 Associate Shader Config to Miss, CHS, RGS
 ```
-
 
 Again, note that the ExportAssociation object accepts the address of a sub-object from the subobjects array. 
 
-## PipelineConfig
+## 4.10 PipelineConfig
 The pipeline configuration is a global sub-object affecting all pipeline stages. In the case of raytracing, it contains a single value - MaxTraceRecursionDepth. This value simply tells the pipeline how many recursive raytracing calls we are going to make. Our object looks as follows:
 ```c++
-PipelineConfig(uint32_t maxTraceRecursionDepth)
+// 4.10 PipelineConfig
+struct PipelineConfig
 {
-config.MaxTraceRecursionDepth = maxTraceRecursionDepth;
-subobject.Type = D3D12_STATE_SUBOBJECT_TYPE_RAYTRACING_PIPELINE_CONFIG;
-subobject.pDesc = &amp;config;
-}
+    PipelineConfig(uint32_t maxTraceRecursionDepth)
+    {
+        config.MaxTraceRecursionDepth = maxTraceRecursionDepth;
+
+        subobject.Type = D3D12_STATE_SUBOBJECT_TYPE_RAYTRACING_PIPELINE_CONFIG;
+        subobject.pDesc = &config;
+    }
+
+    D3D12_RAYTRACING_PIPELINE_CONFIG config = {};
+    D3D12_STATE_SUBOBJECT subobject = {};
+};
 ```
 Since our ray-generation shader doesn’t make any raytracing calls, we set this value to 0.
 ```c++
-// Create the pipeline config
+// 4.10.a Create the pipeline config
 PipelineConfig config(0);
-subobjects[index++] = config.subobject;
+subobjects[index++] = config.subobject; // 8
 ```
-## GlobalRootSignature
+
+## 4.11 GlobalRootSignature
 The last piece of the puzzle is the global root-signature. As the name suggests, this root-signature affects all shaders attached to the pipeline. The final root-signature of a shader is defined by both the global and the shader’s local root-signature. The code is straightforward. This is how we initialize the GlobalRootSignature object:
 ```c++
-GlobalRootSignature(ID3D12Device5Ptr pDevice, const D3D12_ROOT_SIGNATURE_DESC&amp; desc)
+// 4.11 GlobalRootSignature
+struct GlobalRootSignature
 {
-pRootSig = createRootSignature(pDevice, desc);
-pInterface = pRootSig.GetInterfacePtr();
-subobject.pDesc = &amp;pInterface;
-subobject.Type = D3D12_STATE_SUBOBJECT_TYPE_GLOBAL_ROOT_SIGNATURE;
-}
+    GlobalRootSignature(ID3D12Device5Ptr pDevice, const D3D12_ROOT_SIGNATURE_DESC& desc)
+    {
+        pRootSig = createRootSignature(pDevice, desc);
+        pInterface = pRootSig.GetInterfacePtr();
+        subobject.pDesc = &pInterface;
+        subobject.Type = D3D12_STATE_SUBOBJECT_TYPE_GLOBAL_ROOT_SIGNATURE;
+    }
+    ID3D12RootSignaturePtr pRootSig;
+    ID3D12RootSignature* pInterface = nullptr;
+    D3D12_STATE_SUBOBJECT subobject = {};
+};
 ```
 And this is how we use it, setting the global root-signature to an empty signature:
 ```c++
+// 4.11.a Create the global root signature and store the empty signature
 GlobalRootSignature root(mpDevice, {});
 mpEmptyRootSig = root.pRootSig;
-subobjects[index++] = root.subobject;
+subobjects[index++] = root.subobject; // 9
 ```
 
-
-## CreateStateObject
+## 4.12 CreateStateObject
 Now that we initialized our array of D3D12_STATE_SUBOBJECT, we can finally create the ID3D12StateObject object. This is done using the following, simple snippet:
 ```c++
+// 4.12 Create the state
 D3D12_STATE_OBJECT_DESC desc;
-desc.NumSubobjects = index;
+desc.NumSubobjects = index; // 10
 desc.pSubobjects = subobjects.data();
 desc.Type = D3D12_STATE_OBJECT_TYPE_RAYTRACING_PIPELINE;
-d3d_call(mpDevice-&gt;CreateStateObject(&amp;desc, IID_PPV_ARGS(&amp;mpPipelineState)));
+
+d3d_call(mpDevice->CreateStateObject(&desc, IID_PPV_ARGS(&mpPipelineState)));
 ```
 And we’re done!
 There are more details and fine-print related to how to use sub-object and create a state-objects. I strongly suggest you read the spec to get all the details, but for now we have enough to work with.
