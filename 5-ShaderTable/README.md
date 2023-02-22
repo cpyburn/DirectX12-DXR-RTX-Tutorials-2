@@ -22,13 +22,17 @@ the ray-tracing pipeline state object which specifies the programs that will be 
 The last piece required for rendering is the Shader-Table. It’s a GPU-visible buffer which is owned and
 managed by the application – allocation, data updates, etc. The shader-table is an array of records and it
 has 2 roles:
+
     1. Describe the relation between the scene’s geometry and the program to be executed.
     2. Bind resources to the pipeline.
+    
 The first role is required because we can have multiple hit and miss programs attached to the state
 object and we need to know which shader to execute when a geometry is hit (or nothing was hit).
 The second role is required because:
+
     1. We can create each program with a different local root-signature.
     2. Each geometry might require a different set of resources (vertex-buffer, textures, etc.)
+    
 Note that the API allows to use multiple shader-tables in a single DispatchRays() call. For simplicity, we
 will use a single shader-table in this tutorial.
 
