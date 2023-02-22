@@ -208,6 +208,10 @@ We will see how to use these attributes in tutorial 7.
 ## 4.6 Creating the RT Pipeline State Object
 Now that we learnt about the new shader types, we can create our RTPSO. As mentioned before, creating an RTPSO is different from the way we created PSOs in DX12. Instead of a struct similar to D3D12_GRAPHICS_PIPELINE_STATE_DESC, we are going to build an array of D3D12_STATE_SUBOBJECT. Each sub-object describes a single element of the state. Most sub-objects reference other data structures, so we need to make sure all the referenced objects are valid when we call CreateStateObject(). For that reason, we are going to create a simple abstraction for each sub-object type.
 
+```c++
+
+```
+
 Let’s go over the code in createRtPipelineState().
 ```c++
 // 4.6.a
@@ -321,18 +325,37 @@ struct DxilLibrary
 };
 ```
 
+```c++
+// 4.6.i
+static const WCHAR* kRayGenShader = L"rayGen";
+static const WCHAR* kMissShader = L"miss";
+static const WCHAR* kClosestHitShader = L"chs";
+static const WCHAR* kHitGroup = L"HitGroup";
+```
+
+```c++
+// 4.6.j
+DxilLibrary createDxilLibrary()
+{
+    // Compile the shader
+    ID3DBlobPtr pDxilLib = compileLibrary(L"Data/04-Shaders.hlsl", L"lib_6_3");
+    const WCHAR* entryPoints[] = { kRayGenShader, kMissShader, kClosestHitShader };
+    return DxilLibrary(pDxilLib, entryPoints, arraysize(entryPoints));
+}
+```
+
 Back in createRtPipelineState(), we create a DxilLibrary  object and add it to the sub-object array.
 ```c++
-// Create the DXIL library
+// 4.6.k Create the DXIL library
 DxilLibrary dxilLib = createDxilLibrary();
-subobjects[index++] = dxilLib.stateSubobject;
+subobjects[index++] = dxilLib.stateSubobject; // 0 Library
 ```
 We got ourselves our first sub-object object! As you can see, there’s a lot of memory management code here. This is a recurring theme with the new method of creating RTPSO.
 
 ## 4.7 HitProgram
 HitProgram is an abstraction over a D3D12_STATE_SUBOBJECT_TYPE_HIT_GROUP sub-object. A hit-group is a collection of intersection, any-hit and closest-hit shaders, at most one of each type. Since we don’t use custom intersection-shaders in these tutorials, our HitProgram object only accepts AHS and CHS entry point name.
 ```c++
-// 4.7 HitProgram
+// 4.7.a HitProgram
 struct HitProgram
 {
     HitProgram(LPCWSTR ahsExport, LPCWSTR chsExport, const std::wstring& name) : exportName(name)
@@ -353,6 +376,12 @@ struct HitProgram
 ```
 The code should be self-explanatory. The AnyHitShaderImport and ClosestHitShaderImport reference export names declared in the DxilLibrary we created. HitGroupExport is a unique name we will use to identify this hit-group in subsequent calls.
 
+```c++
+// 4.7.b
+HitProgram hitProgram(nullptr, kClosestHitShader, kHitGroup);
+subobjects[index++] = hitProgram.subObject; // 1 Hit Group
+```
+
 ## 4.8 LocalRootSignature
 DXR introduces a new concept called Local Root Signature (LRS). In graphics and compute pipelines, we have a single, global root-signature used by all programs. For ray-tracing, in addition to that root-signature, we can create local root-signatures and bind them to specific shaders. As we will see in the next tutorial, the size of the root-signature affects the size of the Shader Binding Table and LRSs allow us to optimize the SBT.
 
@@ -360,17 +389,94 @@ Looking at createRayGenRootDesc(), you can see that creating an LRS is similar t
 
 The LRS abstraction is in LocalRootSignature:
 ```c++
-LocalRootSignature(ID3D12Device5Ptr pDevice, const D3D12_ROOT_SIGNATURE_DESC&amp; desc)
+// 4.8.a RootSignature create helper class
+ID3D12RootSignaturePtr createRootSignature(ID3D12Device5Ptr pDevice, const D3D12_ROOT_SIGNATURE_DESC& desc)
 {
-pRootSig = createRootSignature(pDevice, desc);
-pInterface = pRootSig.GetInterfacePtr();
-subobject.pDesc = &amp;pInterface;
-subobject.Type = D3D12_STATE_SUBOBJECT_TYPE_LOCAL_ROOT_SIGNATURE;
+    ID3DBlobPtr pSigBlob;
+    ID3DBlobPtr pErrorBlob;
+    HRESULT hr = D3D12SerializeRootSignature(&desc, D3D_ROOT_SIGNATURE_VERSION_1, &pSigBlob, &pErrorBlob);
+    if (FAILED(hr))
+    {
+        std::string msg = convertBlobToString(pErrorBlob.GetInterfacePtr());
+        msgBox(msg);
+        return nullptr;
+    }
+    ID3D12RootSignaturePtr pRootSig;
+    d3d_call(pDevice->CreateRootSignature(0, pSigBlob->GetBufferPointer(), pSigBlob->GetBufferSize(), IID_PPV_ARGS(&pRootSig)));
+    return pRootSig;
+}
+```
+
+```c++
+// 4.8.b LocalRootSignature
+struct LocalRootSignature
+{
+    LocalRootSignature(ID3D12Device5Ptr pDevice, const D3D12_ROOT_SIGNATURE_DESC& desc)
+    {
+        pRootSig = createRootSignature(pDevice, desc);
+        pInterface = pRootSig.GetInterfacePtr();
+        subobject.pDesc = &pInterface;
+        subobject.Type = D3D12_STATE_SUBOBJECT_TYPE_LOCAL_ROOT_SIGNATURE;
+    }
+    ID3D12RootSignaturePtr pRootSig;
+    ID3D12RootSignature* pInterface = nullptr;
+    D3D12_STATE_SUBOBJECT subobject = {};
+};
+```
+
+```c++
+// 4.8.c
+struct RootSignatureDesc
+{
+    D3D12_ROOT_SIGNATURE_DESC desc = {};
+    std::vector<D3D12_DESCRIPTOR_RANGE> range;
+    std::vector<D3D12_ROOT_PARAMETER> rootParams;
+};
+```
+
+```c++
+// 4.8.d
+RootSignatureDesc createRayGenRootDesc()
+{
+    // Create the root-signature
+    RootSignatureDesc desc;
+    desc.range.resize(2);
+    // gOutput
+    desc.range[0].BaseShaderRegister = 0;
+    desc.range[0].NumDescriptors = 1;
+    desc.range[0].RegisterSpace = 0;
+    desc.range[0].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_UAV;
+    desc.range[0].OffsetInDescriptorsFromTableStart = 0;
+
+    // gRtScene
+    desc.range[1].BaseShaderRegister = 0;
+    desc.range[1].NumDescriptors = 1;
+    desc.range[1].RegisterSpace = 0;
+    desc.range[1].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+    desc.range[1].OffsetInDescriptorsFromTableStart = 1;
+
+    desc.rootParams.resize(1);
+    desc.rootParams[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+    desc.rootParams[0].DescriptorTable.NumDescriptorRanges = 2;
+    desc.rootParams[0].DescriptorTable.pDescriptorRanges = desc.range.data();
+
+    // Create the desc
+    desc.desc.NumParameters = 1;
+    desc.desc.pParameters = desc.rootParams.data();
+    desc.desc.Flags = D3D12_ROOT_SIGNATURE_FLAG_LOCAL_ROOT_SIGNATURE;
+
+    return desc;
 }
 ```
 As you can see, we store the ID3D12RootSignature object into a member variable, then set its address into pDesc.
 
 Now that we created a LocalRootSignature object, we need to associate it with one of the shader. We do that using something called an Export Assoication.
+
+```c++
+// 4.8.e Create the ray-gen root-signature and association
+LocalRootSignature rgsRootSignature(mpDevice, createRayGenRootDesc().desc);
+subobjects[index] = rgsRootSignature.subobject; // 2 RayGen Root Sig
+```
 
 ## ExportAssociation
 An ExportAssociation object binds a sub-object into shaders and hit-groups. The object itself is very simple:
