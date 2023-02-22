@@ -8,324 +8,236 @@ Requirements:
 - [Windows 10 SDK version 1809 (10.0.17763.0)](https://developer.microsoft.com/en-us/windows/downloads/sdk-archive)
 - Visual Studio 2022
 
-DXR Tutorial 03
-Acceleration Structure
+DXR Tutorial 04
+Raytracing Pipeline State
+
 Overview
-Now that we can clear the screen, it’s time to render something. The following 5 tutorials will do just that – we will write some code that will use raytracing to render a triangle to the screen.
-The first thing we need to create are acceleration structures. An acceleration structure is an opaque data structure that represents the scene’s geometry. This structure is used in rendering time to intersect rays against. For more information on it and optimized usage please refer to the spec. In this tutorial we will focus on how to create it.
+Just like in regular rasterization code, we need to create a pipeline state that controls the fixed-function units and describes the shader which will be used. In this tutorial we will focus on the API that creates an ID3D12StateObjectPtr object. It’s a new DXR state interface, and is created differently than ID3D12PipelineState. This entire operation happens during load-time inside createRtPipelineState().
 
-## 3.0 01-CreateWindow.h
+## 4.0 01-CreateWindow.h
 ```c++ 
-// Tutorial 3
-void createAccelerationStructures();
-ID3D12ResourcePtr mpVertexBuffer;
-ID3D12ResourcePtr mpTopLevelAS;
-ID3D12ResourcePtr mpBottomLevelAS;
-uint64_t mTlasSize = 0;
+// Tutorial 04
+void createRtPipelineState();
+ID3D12StateObjectPtr mpPipelineState;
+ID3D12RootSignaturePtr mpEmptyRootSig;
 ```
+## Shader-Libraries
+dxcompiler, the new SM6.x compiler, introduces a new concept called shader-libraries. Libraries allow us to compile a file containing multiple shaders without specifying an entry point. We create shader libraries by specifying "lib_6_3" as the target profile, which requires us to use an empty string for the entry point. Using dxcompiler is straightforward but is not in the scope of this tutorial. You can take a look at compileShader() to see an example usage. 
 
-Most of the action happens inside createAccelerationStructures().It’s a new function we added which is called from onLoad().
+## Ray-Tracing Shaders
+DXR introduces 5 new shader types – ray-generation, miss, closest-hit, any-hit, and intersection. All the shaders for this tutorial can be found in 04-Shaders.hlsl.
 
-## 3.1 createBuffer
-need helper method for creating all the buffers
+##Ray-Generation Shader
+Ray-generation shader is the first stage in the ray-tracing pipeline. We will see in tutorial 06 that ray-tracing commands work on a 2D-grid. The ray-generation shader will be executed once per work item. This is where the user generates the primary-rays and dispatches ray-query calls.
+
+Here is our ray-generation shader:
 ```c++
-// 3.1 createBuffer
-ID3D12ResourcePtr createBuffer(ID3D12Device5Ptr pDevice, uint64_t size, D3D12_RESOURCE_FLAGS flags, D3D12_RESOURCE_STATES initState, const D3D12_HEAP_PROPERTIES& heapProps)
+RaytracingAccelerationStructure gRtScene : register(t0);
+RWTexture2D&lt;float4&gt; gOutput : register(u0);
+[shader(&quot;raygeneration&quot;)]
+void rayGen()
 {
-    D3D12_RESOURCE_DESC bufDesc = {};
-    bufDesc.Alignment = 0;
-    bufDesc.DepthOrArraySize = 1;
-    bufDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
-    bufDesc.Flags = flags;
-    bufDesc.Format = DXGI_FORMAT_UNKNOWN;
-    bufDesc.Height = 1;
-    bufDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
-    bufDesc.MipLevels = 1;
-    bufDesc.SampleDesc.Count = 1;
-    bufDesc.SampleDesc.Quality = 0;
-    bufDesc.Width = size;
-
-    ID3D12ResourcePtr pBuffer;
-    d3d_call(pDevice->CreateCommittedResource(&heapProps, D3D12_HEAP_FLAG_NONE, &bufDesc, initState, nullptr, IID_PPV_ARGS(&pBuffer)));
-    return pBuffer;
+uint3 launchIndex = DispatchRaysIndex();
+float3 col = linearToSrgb(float3(0.4, 0.6, 0.2));
+gOutput[launchIndex.xy] = float4(col, 1);
 }
 ```
-## 3.2 TriangleVB upload heap props
-need upload heap properties for creating buffers starting with the triangle vertex buffer
+
+The most notable thing in this file is the first line. There’s a new HLSL data type called RaytracingAccelerationStructure. As you can guess by the name, it contains a resource view to a TLAS. As you can see, it shares the same register type as a regular shader resource view.
+
+gOutput is a UAV to a 2D texture which we will use to output the results.
+
+As for the shader itself, we first declare the type of the shader - [shader("raygeneration")]. Remember that when we create a shader-library we do not specify a shader profile. The compiler uses that declaration to figure out the shader type.
+
+The last thing to note is DispatchRaysIndex(). This intrinsic will return the 3D-index of the current work item.
+
+The rest of the shader simply writes a constant color to the screen. In later tutorials we will see how to implement a more interesting RGS which dispatches rays.
+
+## Miss-Shader
+A miss-shader will be called whenever a raytrace query did not hit any of the objects in the TLAS. Here’s our miss-shader:
 ```c++
-// 3.2 TriangleVB upload heap props
-static const D3D12_HEAP_PROPERTIES kUploadHeapProps =
+struct Payload
 {
-    D3D12_HEAP_TYPE_UPLOAD,
-    D3D12_CPU_PAGE_PROPERTY_UNKNOWN,
-    D3D12_MEMORY_POOL_UNKNOWN,
-    0,
-    0,
+bool hit;
+};
+[shader(&quot;miss&quot;)]
+void miss(inout Payload payload)
+{
+payload.hit = false;
+}
+```
+
+The miss-shader accepts a single inout argument – the ray payload. The ray-payload is a user-defined struct which is used to communicate data between the different shader stages. Note that the payload must be a struct. 
+
+OK. Now to the last program type.
+
+## Hit-Group
+A hit group is a collection of Closest-Hit, Any-Hit and Intersection Shaders. It is a single state element describing how to test for intersection and what should be the behavior in case an intersection is detected.
+
+*Any Hit Shader* will be invoked whenever an intersection is found in the traversal. Its main use is to programmatically decide whether an intersection should be accepted. For example, for alpha-tested geometry we would like to ignore the intersection if the alpha test failed. The any-hit shader will be ignored for acceleration structures created with the D3D12_RAYTRACING_GEOMETRY_FLAG_OPAQUE flag. Note that there is no guarantee on the order that any-hit shaders are executed when multiple intersections are found. This means the first invocation may not be the closest intersection to the origin, and the number of times the shader is invoked for a specific ray may vary!
+
+*Closest Hit Shader* will be invoked exactly once per traversal if an intersection was found. As the name suggests, it will be invoked for the closest intersection found which falls in the ray range specified by the user (we will cover this in the next tutorial).
+
+*Intersection Shader* will be invoked only when the primitive type is axis-aligned bounding-box. This topic is not covered in this tutorial series. For triangles, an internal triangle-intersection shader is used regardless of whether or not an intersection shader was specified. We can ignore this shader type for now.
+
+As you might recall, our acceleration structures were built with the D3D12_RAYTRACING_GEOMETRY_FLAG_OPAQUE flag and the primitive type is triangles. That means the only shader which is relevant in our case is the CHS. 
+```c++
+[shader(&quot;closesthit&quot;)]
+void chs(inout Payload payload, in BuiltInTriangleIntersectionAttributes attribs)
+{
+payload.hit = true;
+}
+```
+
+This shader is very similar to the miss-shader above. It accepts the payload and another input – the intersection attributes. The intersection attributes come from the intersection shader. In our case, we are using the built-in intersection shader, which uses a new built-in HLSL struct to pass attributes:
+```c++
+struct BuiltInTriangleIntersectionAttributes
+{
+float2 barycentrics;
 };
 ```
+We will see how to use these attributes in tutorial 7.
 
-## 3.3 createTriangleVB
-The first line of code there is
-* mpVertexBuffer = createTriangleVB(mpDevice);
+## Creating the RT Pipeline State Object
+Now that we learnt about the new shader types, we can create our RTPSO. As mentioned before, creating an RTPSO is different from the way we created PSOs in DX12. Instead of a struct similar to D3D12_GRAPHICS_PIPELINE_STATE_DESC, we are going to build an array of D3D12_STATE_SUBOBJECT. Each sub-object describes a single element of the state. Most sub-objects reference other data structures, so we need to make sure all the referenced objects are valid when we call CreateStateObject(). For that reason, we are going to create a simple abstraction for each sub-object type.
 
-This is a standard triangle vertex-buffer, created using the regular DX12 API and so we will not go into details. The only thing to note is that we allocate buffer on the upload heap, but that’s just for convenience as it simplifies the code.
-
+Let’s go over the code in createRtPipelineState().
 ```c++
-// 3.3 createTriangleVB
-ID3D12ResourcePtr createTriangleVB(ID3D12Device5Ptr pDevice)
-{
-    const vec3 vertices[] =
-    {
-        vec3(0,          1,  0),
-        vec3(0.866f,  -0.5f, 0),
-        vec3(-0.866f, -0.5f, 0),
-    };
-
-    // For simplicity, we create the vertex buffer on the upload heap, but that's not required
-    ID3D12ResourcePtr pBuffer = createBuffer(pDevice, sizeof(vertices), D3D12_RESOURCE_FLAG_NONE, D3D12_RESOURCE_STATE_GENERIC_READ, kUploadHeapProps);
-    uint8_t* pData;
-    pBuffer->Map(0, nullptr, (void**)&pData);
-    memcpy(pData, vertices, sizeof(vertices));
-    pBuffer->Unmap(0, nullptr);
-    return pBuffer;
-}
+std::array&lt;D3D12_STATE_SUBOBJECT, 10&gt; subobjects;
 ```
 
-## 3.4 bottom-level acceleration structure
-Next, we will create the bottom-level acceleration structure
-
-* AccelerationStructureBuffers bottomLevelBuffers = createBottomLevelAS(mpDevice, mpCmdList, mpVertexBuffer);
-Bottom-Level Acceleration Structure
-
-The BLAS is a data structure that represent a local-space mesh. It does not contain information regarding the world-space location of the vertices or instancing information. 
-
-The first thing in creating it is initializing a D3D12_RAYTRACING_GEOMETRY_DESC struct:
-
-
-We first set the type to D3D12_RAYTRACING_GEOMETRY_TYPE_TRIANGLES. This implies we will be using the built-in triangle intersection shader, but we will get to what that exactly means in tutorial 7. 
-
-Next, we set the GPU virtual address of the vertex-buffer.
-
-The next 3 fields are equivalent to an input element layout descriptor. They describe the vertex stride, the offset of the position element inside the vertex and the position format. We only have a single element in our VB, which is the position, meaning VertexByteOffset equals 0. Each vertex is exactly 3 floats, and that’s the size and format of the vertex.
-
-Next, we will set the number of vertices in the buffer. We only have 3.
-The Flags field allows us to control some aspects of the acceleration structure. In this case, we know that the triangle is not transparent and so we set the D3D12_RAYTRACING_GEOMETRY_FLAG_OPAQUE flag.
-The spec recommends using this flag as much as possible. We will get to what this flag means exactly in tutorial 7.
-
-Now that we are done with the descriptor, let’s create the buffer. As you know, in DX12, resource allocation and lifetime management is the user’s responsibility. DXR is no different in this regard – it will not allocate buffers for us, not even internal temporary buffers required during acceleration structure creation.
-DXR requires 2 buffers:
-* Scratch buffer which is required for intermediate computation.
-* The result buffer which will hold the acceleration data.
-To allocate these buffers, we need to know the required size. This is done using the following snippet:
-We first initialize a D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS struct:
-* DescsLayout – We are using an array, so the layout is D3D12_ELEMENTS_LAYOUT_ARRAY.
-* Flags – This field should match the value we will later use for building the acceleration structures. In our case we don’t use any special flags.
-* The next 2 fields are the number of descriptors and the pointer to the descriptor array (in our case the array size is 1)
-* Type – The type of the acceleration structure we are going to generate, bottom-level in our case.
-
-Next, we need to call GetRaytracingAccelerationStructurePrebuildInfo() function. Once we get the information we can allocate the buffers:
-
-The buffers are allocated on the default heap, since we don’t need read/write access to them. Both buffers must be created with the D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS flag because the implementation will be performing read/write operations, and synchronizing operations on these buffers are done through UAV barriers.
-
-The spec also requires the state of the buffers to be:
-* D3D12_RESOURCE_STATE_UNORDERED_ACCESS for the scratch buffer.
-* D3D12_RESOURCE_STATE_RAYTRACING_ACCELERATION_STRUCTURE for the destination buffer.
-
-Now that we have everything we need, we can create the acceleration structure. We start by initializing the AS descriptor. This also requires the same parameters we used to call GetRaytracingAccelerationStructurePrebuildInfo().
-
-Additionally, we must pass the GPU virtual addresses of the destination AS and the scratch buffer.
-Now that we have a descriptor ready, we can record a command.
-
+First, we allocate an array containing 10 sub-objects. We will see why 10 as we progress through the tutorial.
+*DxilLibrary*
+This is our abstraction for a sub-object of type D3D12_STATE_SUBOBJECT_TYPE_DXIL_LIBRARY. 
+Let’s start from the struct members:
 ```c++
-// 3.4.a bottom-level acceleration structure
-static const D3D12_HEAP_PROPERTIES kDefaultHeapProps =
-{
-    D3D12_HEAP_TYPE_DEFAULT,
-    D3D12_CPU_PAGE_PROPERTY_UNKNOWN,
-    D3D12_MEMORY_POOL_UNKNOWN,
-    0,
-    0
-};
-// 3.4.b bottom-level acceleration structure
-struct AccelerationStructureBuffers
-{
-    ID3D12ResourcePtr pScratch;
-    ID3D12ResourcePtr pResult;
-    ID3D12ResourcePtr pInstanceDesc;    // Used only for top-level AS
-};
-//3.4.c bottom-level acceleration structure
-AccelerationStructureBuffers createBottomLevelAS(ID3D12Device5Ptr pDevice, ID3D12GraphicsCommandList4Ptr pCmdList, ID3D12ResourcePtr pVB)
-{
-    D3D12_RAYTRACING_GEOMETRY_DESC geomDesc = {};
-    geomDesc.Type = D3D12_RAYTRACING_GEOMETRY_TYPE_TRIANGLES;
-    geomDesc.Triangles.VertexBuffer.StartAddress = pVB->GetGPUVirtualAddress();
-    geomDesc.Triangles.VertexBuffer.StrideInBytes = sizeof(vec3);
-    geomDesc.Triangles.VertexFormat = DXGI_FORMAT_R32G32B32_FLOAT;
-    geomDesc.Triangles.VertexCount = 3;
-    geomDesc.Flags = D3D12_RAYTRACING_GEOMETRY_FLAG_OPAQUE;
-
-    // Get the size requirements for the scratch and AS buffers
-    D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS inputs = {};
-    inputs.DescsLayout = D3D12_ELEMENTS_LAYOUT_ARRAY;
-    inputs.Flags = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_NONE;
-    inputs.NumDescs = 1;
-    inputs.pGeometryDescs = &geomDesc;
-    inputs.Type = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL;
-
-    D3D12_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO info = {};
-    pDevice->GetRaytracingAccelerationStructurePrebuildInfo(&inputs, &info);
-
-    // Create the buffers. They need to support UAV, and since we are going to immediately use them, we create them with an unordered-access state
-    AccelerationStructureBuffers buffers;
-    buffers.pScratch = createBuffer(pDevice, info.ScratchDataSizeInBytes, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, kDefaultHeapProps);
-    buffers.pResult = createBuffer(pDevice, info.ResultDataMaxSizeInBytes, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_RAYTRACING_ACCELERATION_STRUCTURE, kDefaultHeapProps);
-
-    // Create the bottom-level AS
-    D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_DESC asDesc = {};
-    asDesc.Inputs = inputs;
-    asDesc.DestAccelerationStructureData = buffers.pResult->GetGPUVirtualAddress();
-    asDesc.ScratchAccelerationStructureData = buffers.pScratch->GetGPUVirtualAddress();
-
-    pCmdList->BuildRaytracingAccelerationStructure(&asDesc, 0, nullptr);
-
-    // We need to insert a UAV barrier before using the acceleration structures in a raytracing operation
-    D3D12_RESOURCE_BARRIER uavBarrier = {};
-    uavBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_UAV;
-    uavBarrier.UAV.pResource = buffers.pResult;
-    pCmdList->ResourceBarrier(1, &uavBarrier);
-
-    return buffers;
-}
+D3D12_DXIL_LIBRARY_DESC dxilLibDesc = {};
+D3D12_STATE_SUBOBJECT stateSubobject{};
+ID3DBlobPtr pShaderBlob;
+std::vector&lt;D3D12_EXPORT_DESC&gt; exportDesc;
+std::vector&lt;std::wstring&gt; exportName;
+```
+As you can see, we store a bunch of D3D12 objects. As we will see in a second, a DXIL library sub-objects needs to reference multiple structs and we need to make sure they are valid when we create the RTPSO. 
+```c++
+DxilLibrary(ID3DBlobPtr pBlob, const WCHAR* entryPoint[], uint32_t entryPointCount) :
 ```
 
-Calling BuildRaytracingAccelerationStructure() will record a command into the list. This command will note be processed until we submit the command list, so make sure the scratch-buffer will not be released until execution finishes.
-In the next section we will use the BLAS as an input for another BuildRaytracingAccelerationStructure() operation. We need to make sure that the write operation will finish before reading data from the result buffer. We do that using a regular UAV-barrier.
+The library accepts a single ID3DBlob object which contains an SM6.1 library. This library can contain multiple entry points, and we need to specify which entry points we plan to use. In our case, we store shaders entry points (see createDxilLibrary()).
 
-
-
-## 3.5 Top-Level Acceleration Structure
-The TLAS is an opaque data structure that represents the entire scene. As you recall, BLAS represents objects in local space. The TLAS references the bottom-level structures, with each reference containing local-to-world transformation matrix.
-
-Let’s take a look at createTopLevelAS().
-
-Like bottom-level AS creation, we need to create the result and scratch buffers. The code is very similar, the only difference is how we query the required sizes. This happens in the following snippet:
-
-The only difference is the Type field – we are requesting information for creating a TLAS.
-
-Next, we will create the scratch and result buffer. Nothing new here.
-
-Now we can proceed to describe the instances used for the TLAS. We do that by filling a buffer of D3D12_RAYTRACING_INSTANCE_DESC. We pass an array of such descriptors to the BuildRaytracingAcceleration() function. This array describes the scene.
-
-The first thing to know about this array, is that it can’t simply reside on the regular C++ heap. We need to pass this array to BuildRaytracingAcceleration() in a GPU buffer (either on the upload or default heap). Since it’s a DX resource accessed by the GPU, all the regular synchronization and lifetime management rules apply.
-
-We only have a single instance, so we create a buffer with that size, then map it to write. Next, we will initialize it.
-
-The first field is InstanceID. It doesn’t affect raytracing at all, and the runtime ignores it while tracing rays. It’s simply a user-defined value that will communicated to the shader via the InstanceID() intrinsic.
-
-InstanceContributionToHitGroupIndex is the offset of the instance inside the shader-binding-table. Let’s set it to 0 for now. This value will be explained in tutorial 5.
-
-There are numerous options for the Flags. Refer to the spec for more details, in the tutorial we will just set it to D3D12_RAYTRACING_INSTANCE_FLAG_NONE.
-
-Next is the transformation matrix. It’s a 3x4 affine transform matrix in row-major layout. This transformation will be applied to each vertex in the bottom-level structure. In this case, we are setting an identity matrix. This value can also be nullptr, which is equivalent to setting an identity matrix, but may result in better performance.
-
-The last field – AccelerationStructure – is the GPU virtual address of the bottom-level acceleration structure containing the vertex data.
-
-After we finish the initialization, we can unmap the desc-buffer and call BuildRaytracingAccelerationStructure(). The code is almost identical to the one used to create the BLAS, except:
-* We need to set the instance-descriptor buffer GPU VA into the InstanceDescs field.
-* We need to set the Type field to D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL
-
-Just as we did for the BLAS, we need to insert a UAV barrier for the result buffer. This step is required because we need to make sure that the write operation performed in BuildRaytracingAccelerationStructure() finishes before the read operation in DispatchRays() (will be shown in tutorial 6).
-
+Next, we will initialize the D3D12_STATE_SUBOBJECT. pDesc has a void* type, so we need to make sure we assign the right data structure to it. In this case, it’s a pointer to D3D12_DXIL_LIBRARY_DESC.
 ```c++
-// 3.5 Top-Level Acceleration Structure
-AccelerationStructureBuffers createTopLevelAS(ID3D12Device5Ptr pDevice, ID3D12GraphicsCommandList4Ptr pCmdList, ID3D12ResourcePtr pBottomLevelAS, uint64_t& tlasSize)
-{
-    // First, get the size of the TLAS buffers and create them
-    D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS inputs = {};
-    inputs.DescsLayout = D3D12_ELEMENTS_LAYOUT_ARRAY;
-    inputs.Flags = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_NONE;
-    inputs.NumDescs = 1;
-    inputs.Type = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL;
 
-    D3D12_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO info;
-    pDevice->GetRaytracingAccelerationStructurePrebuildInfo(&inputs, &info);
-
-    // Create the buffers
-    AccelerationStructureBuffers buffers;
-    buffers.pScratch = createBuffer(pDevice, info.ScratchDataSizeInBytes, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, kDefaultHeapProps);
-    buffers.pResult = createBuffer(pDevice, info.ResultDataMaxSizeInBytes, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_RAYTRACING_ACCELERATION_STRUCTURE, kDefaultHeapProps);
-    tlasSize = info.ResultDataMaxSizeInBytes;
-
-    // The instance desc should be inside a buffer, create and map the buffer
-    buffers.pInstanceDesc = createBuffer(pDevice, sizeof(D3D12_RAYTRACING_INSTANCE_DESC), D3D12_RESOURCE_FLAG_NONE, D3D12_RESOURCE_STATE_GENERIC_READ, kUploadHeapProps);
-    D3D12_RAYTRACING_INSTANCE_DESC* pInstanceDesc;
-    buffers.pInstanceDesc->Map(0, nullptr, (void**)&pInstanceDesc);
-
-    // Initialize the instance desc. We only have a single instance
-    pInstanceDesc->InstanceID = 0;                            // This value will be exposed to the shader via InstanceID()
-    pInstanceDesc->InstanceContributionToHitGroupIndex = 0;   // This is the offset inside the shader-table. We only have a single geometry, so the offset 0
-    pInstanceDesc->Flags = D3D12_RAYTRACING_INSTANCE_FLAG_NONE;
-    mat4 m; // Identity matrix
-    memcpy(pInstanceDesc->Transform, &m, sizeof(pInstanceDesc->Transform));
-    pInstanceDesc->AccelerationStructure = pBottomLevelAS->GetGPUVirtualAddress();
-    pInstanceDesc->InstanceMask = 0xFF;
-    
-    // Unmap
-    buffers.pInstanceDesc->Unmap(0, nullptr);
-        
-    // Create the TLAS
-    D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_DESC asDesc = {};
-    asDesc.Inputs = inputs;
-    asDesc.Inputs.InstanceDescs = buffers.pInstanceDesc->GetGPUVirtualAddress();
-    asDesc.DestAccelerationStructureData = buffers.pResult->GetGPUVirtualAddress();
-    asDesc.ScratchAccelerationStructureData = buffers.pScratch->GetGPUVirtualAddress();
-
-    pCmdList->BuildRaytracingAccelerationStructure(&asDesc, 0, nullptr);
-
-    // We need to insert a UAV barrier before using the acceleration structures in a raytracing operation
-    D3D12_RESOURCE_BARRIER uavBarrier = {};
-    uavBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_UAV;
-    uavBarrier.UAV.pResource = buffers.pResult;
-    pCmdList->ResourceBarrier(1, &uavBarrier);
-
-    return buffers;
-}
 ```
 
-## 3.6 createAccelerationStructures()
-We created some buffers and recorded commands to create bottom-level and top-level acceleration structures. We now need to execute the command-list. To simplify resource lifetime management, we will submit the list and wait until the GPU finishes its execution. This is not required by the spec – the list can be submitted whenever as long as the resources are kept alive until execution finishes.
-
-The last part is releasing resources that are no longer required and keep references to the resources which will be used for rendering.
-
-Remember that we are using smart COM-pointers, so keeping reference is as simple as storing a copy of the smart-pointer. This happens in the following code:
-
-
-Note that we need to store both top-level and bottom-level structures. The scratch buffers and the instance-desc buffers will be released automatically once the local variable holding their smart pointer goes out of scope.
-
-And that’s it! We have acceleration structures, which means one major concept of DXRT is behind us!
-
+Next, we clear the library desc and allocate space for the export desc and export names.
 ```c++
-// 3.6 createAccelerationStructures()
-void Tutorial01::createAccelerationStructures()
-{
-    mpVertexBuffer = createTriangleVB(mpDevice);
-    AccelerationStructureBuffers bottomLevelBuffers = createBottomLevelAS(mpDevice, mpCmdList, mpVertexBuffer);
-    AccelerationStructureBuffers topLevelBuffers = createTopLevelAS(mpDevice, mpCmdList, bottomLevelBuffers.pResult, mTlasSize);
 
-    // The tutorial doesn't have any resource lifetime management, so we flush and sync here. This is not required by the DXR spec - you can submit the list whenever you like as long as you take care of the resources lifetime.
-    mFenceValue = submitCommandList(mpCmdList, mpCmdQueue, mpFence, mFenceValue);
-    mpFence->SetEventOnCompletion(mFenceValue, mFenceEvent);
-    WaitForSingleObject(mFenceEvent, INFINITE);
-    uint32_t bufferIndex = mpSwapChain->GetCurrentBackBufferIndex();
-    mpCmdList->Reset(mFrameObjects[0].pCmdAllocator, nullptr);
-
-    // Store the AS buffers. The rest of the buffers will be released once we exit the function
-    mpTopLevelAS = topLevelBuffers.pResult;
-    mpBottomLevelAS = bottomLevelBuffers.pResult;
-}
 ```
 
-## 3.7 onLoad
+
+Now, assuming pBlob is not null, we can initialize the D3D12_DXIL_LIBRARY_DESC object.
 ```c++
-createAccelerationStructures();             // Tutorial 03
+
 ```
+
+
+We need to set the blob address, blob size, number of exports (AKA entry-points) and a pointer to the array of export-desc. Since we already resized our exportDesc vector, we know that the address will not change. Take care when dynamically resizing vectors, it’s not uncommon to forget that the address changes which makes pExports invalid.
+
+We then go over the entry-points and initialize the D3D12_EXPORT_DESC vector.
+```c++
+
+```
+
+
+
+
+2 things to note:
+* We cache the entry-point name into a pre-allocated member vector of strings.
+* We set ExportToRename to nullptr. Later we will see that we need a way to identify each shader inside a state-object. This is usually done by passing the entry-point name to the required function. There could be cases where shaders from different blobs share the same entry-point name, making the identification ambiguous. To resolve this, we can use ExportToRename to give each shader a unique name. In our case, we set it to nullptr since each shader has a unique-entry point name.
+
+ 
+Back in createRtPipelineState(), we create a DxilLibrary  object and add it to the sub-object array.
+```c++
+
+```
+
+
+We got ourselves our first sub-object object! As you can see, there’s a lot of memory management code here. This is a recurring theme with the new method of creating RTPSO.
+## HitProgram
+HitProgram is an abstraction over a D3D12_STATE_SUBOBJECT_TYPE_HIT_GROUP sub-object. A hit-group is a collection of intersection, any-hit and closest-hit shaders, at most one of each type. Since we don’t use custom intersection-shaders in these tutorials, our HitProgram object only accepts AHS and CHS entry point name.
+```c++
+
+```
+The code should be self-explanatory. The AnyHitShaderImport and ClosestHitShaderImport reference export names declared in the DxilLibrary we created. HitGroupExport is a unique name we will use to identify this hit-group in subsequent calls.
+
+## LocalRootSignature
+DXR introduces a new concept called Local Root Signature (LRS). In graphics and compute pipelines, we have a single, global root-signature used by all programs. For ray-tracing, in addition to that root-signature, we can create local root-signatures and bind them to specific shaders. As we will see in the next tutorial, the size of the root-signature affects the size of the Shader Binding Table and LRSs allow us to optimize the SBT.
+
+Looking at createRayGenRootDesc(), you can see that creating an LRS is similar to a global root-signature generation, except we need to set the D3D12_ROOT_SIGNATURE_FLAG_LOCAL_ROOT_SIGNATURE flag.
+
+The LRS abstraction is in LocalRootSignature:
+```c++
+
+```
+As you can see, we store the ID3D12RootSignature object into a member variable, then set its address into pDesc.
+
+Now that we created a LocalRootSignature object, we need to associate it with one of the shader. We do that using something called an Export Assoication.
+
+## ExportAssociation
+An ExportAssociation object binds a sub-object into shaders and hit-groups. The object itself is very simple:
+```c++
+
+```
+
+There’s one important detail we must remember when creating an ExportAssociation object- pSubobjectToAssociate must point to an object which is part of the array we are passing into CreateStateObject(). Let’s look at how we use the last 2 objects and see what that means:
+
+First, we create the local root-signature for the ray-generation shader. We then insert its D3D12_STATE_SUBOBJECT into the subobjects array. Then, when we create our ExportAssociation object, we pass the address of subobjects[rgsRootIndex]. Be careful not making the mistake of using the address of rgsRootSignature.subobject, it will not work as expected.
+
+The next bit of code creates an empty local root-signature and binds it to the miss-shader and the hit-program. We need to bind an LRS for every object we export from our DxilLibrary. 
+```c++
+
+```
+An important detail to point out is that we are not using the hit group name specified earlier in the HitProgram sub-object. The official Windows 10 DXR release initially included an issue preventing associations with hit group names from working correctly. Normally, we would prefer to use hitProgram.exportName.c_str(), but until this is fixed you must include every entry point in the hit group when creating ExportAssociation objects. Currently, we only have one closest-hit shader.
+
+## ShaderConfig
+Next bit is the shader configuration. There are 2 values we need to set:
+* The payload size in bytes. This is the size of the payload struct we defined in the HLSL. In our case the payload is a single bool (4-bytes in HLSL).
+* The attributes size in bytes. This is the size of the data the hit-shader accepts as its intersection-attributes parameter. For the built-in intersection shader, the attributes size is 8-bytes (2 floats).
+```c++
+
+```
+The code should be self-explanatory. Once we create a ShaderConfig object, we need to associate it with our shaders, which is what the following snippet does.
+```c++
+
+```
+
+
+Again, note that the ExportAssociation object accepts the address of a sub-object from the subobjects array. 
+
+## PipelineConfig
+The pipeline configuration is a global sub-object affecting all pipeline stages. In the case of raytracing, it contains a single value - MaxTraceRecursionDepth. This value simply tells the pipeline how many recursive raytracing calls we are going to make. Our object looks as follows:
+```c++
+
+```
+Since our ray-generation shader doesn’t make any raytracing calls, we set this value to 0.
+```c++
+
+```
+## GlobalRootSignature
+The last piece of the puzzle is the global root-signature. As the name suggests, this root-signature affects all shaders attached to the pipeline. The final root-signature of a shader is defined by both the global and the shader’s local root-signature. The code is straightforward. This is how we initialize the GlobalRootSignature object:
+```c++
+
+```
+And this is how we use it, setting the global root-signature to an empty signature:
+```c++
+
+```
+
+
+## CreateStateObject
+Now that we initialized our array of D3D12_STATE_SUBOBJECT, we can finally create the ID3D12StateObject object. This is done using the following, simple snippet:
+```c++
+
+```
+And we’re done!
+There are more details and fine-print related to how to use sub-object and create a state-objects. I strongly suggest you read the spec to get all the details, but for now we have enough to work with.
