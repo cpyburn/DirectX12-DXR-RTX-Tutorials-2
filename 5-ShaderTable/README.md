@@ -72,30 +72,31 @@ resources, so its record size is the largest.
 Remember that each shader-table record starts with an opaque program identifier, whose size is
 defined by D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES.
 ```c++
-
+mShaderTableEntrySize = D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES;
 ```
 
 Next, we need to add the size of the data required for the root-table. We created the Hit Program’s
 root-signature with a single descriptor-table entry. A descriptor-table consumes 8 bytes, so let’s add it to
 the entry size:
 ```c++
-
+mShaderTableEntrySize += 8; // The ray-gen&#39;s descriptor table
 ```
 
 Finally, the entry size must be aligned up to D3D12_RAYTRACING_SHADER_RECORD_BYTE_ALIGNMENT.
 ```c++
-
+mShaderTableEntrySize = align_to(D3D12_RAYTRACING_SHADER_RECORD_BYTE_ALIGNMENT, mShaderTableEntrySize);
 ```
 
 We have 3 programs and a single geometry, so we need 3 entries (we’ll get to why the number of
 entries depends on the geometry count in later tutorials).
 ```c++
-
+uint32_t shaderTableSize = mShaderTableEntrySize * 3;
 ```
 
 Now that we have the size, we can create the buffer. For simplicity, we create on the upload heap.
 ```c++
-
+mpShaderTable = createBuffer(mpDevice, shaderTableSize, D3D12_RESOURCE_FLAG_NONE,
+D3D12_RESOURCE_STATE_GENERIC_READ, kUploadHeapProps);
 ```
 
 The shader-table buffer can also be created on the default heap, in which case we need to transition it
@@ -106,12 +107,22 @@ program, followed by the miss program. The hit program record will be the last.
 To get the shader identifier, we need to use the ID3D12StateObjectProperties interface. We get it
 using the following snippet:
 ```c++
-
+ID3D12StateObjectPropertiesPtr pRtsoProps;
+mpPipelineState-&gt;QueryInterface(IID_PPV_ARGS(&amp;pRtsoProps));
 ```
 
 Once we converted the pointer, we can get the identifiers:
 ```c++
+// Entry 0 - ray-gen program ID and descriptor data
+memcpy(pData, pRtsoProps-&gt;GetShaderIdentifier(kRayGenShader), D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES);
+// This is where we need to set the descriptor data for the ray-gen shader
+// Entry 1 - miss program
+memcpy(pData + mShaderTableEntrySize, pRtsoProps-&gt;GetShaderIdentifier(kMissShader),
+D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES);
 
+// Entry 2 - hit program. Program ID and one constant-buffer as root descriptor
+uint8_t* pHitEntry = pData + mShaderTableEntrySize * 2; // +2 skips the ray-gen and miss entries
+memcpy(pHitEntry, pRtsoProps-&gt;GetShaderIdentifier(kHitGroup), D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES);
 ```
 
 The program identifier entry must be placed at the beginning of the record. Also note that we didn’t
