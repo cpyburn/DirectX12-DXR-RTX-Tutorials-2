@@ -204,9 +204,6 @@ Now that we have everything ready, we can call DispatchRays().
 mpCmdList->DispatchRays(&raytraceDesc);
 ```
 
-That’s all. We can now clear the screen
-using the ray-generation shader!
-
 And copy the results of the RayTrace UAV to the output
 ```c++
 // 6.4.h Copy the results to the back-buffer
@@ -214,6 +211,25 @@ resourceBarrier(mpCmdList, mpOutputResource, D3D12_RESOURCE_STATE_UNORDERED_ACCE
 resourceBarrier(mpCmdList, mFrameObjects[rtvIndex].pSwapChainBuffer, D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_COPY_DEST);
 mpCmdList->CopyResource(mFrameObjects[rtvIndex].pSwapChainBuffer, mpOutputResource);
 ```
+
+## 6.5 beginFrame
+```c++
+// 6.5 Bind the descriptor heaps
+ID3D12DescriptorHeap* heaps[] = { mpSrvUavHeap };
+mpCmdList->SetDescriptorHeaps(arraysize(heaps), heaps);
+return mpSwapChain->GetCurrentBackBufferIndex();
+```
+
+## 6.6 endFrame
+Update the resource barrier to D3D12_RESOURCE_STATE_COPY_DEST as before state
+```c++
+// 6.6 update before state D3D12_RESOURCE_STATE_COPY_DEST
+resourceBarrier(mpCmdList, mFrameObjects[rtvIndex].pSwapChainBuffer, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PRESENT);
+```
+
+That’s all. We can now clear the screen
+using the ray-generation shader!
+
 
 That’s not too exciting, but we’ve
 made a lot of progress. The next step is to render something more interesting. But that’s a different
