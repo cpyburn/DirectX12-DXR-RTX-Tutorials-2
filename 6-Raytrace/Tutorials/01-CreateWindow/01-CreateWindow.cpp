@@ -758,7 +758,7 @@ void Tutorial01::createShaderTable()
     mShaderTableEntrySize = D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES;
     mShaderTableEntrySize += 8; // The ray-gen's descriptor table
     mShaderTableEntrySize = align_to(D3D12_RAYTRACING_SHADER_RECORD_BYTE_ALIGNMENT, mShaderTableEntrySize);
-    uint32_t shaderTableSize = mShaderTableEntrySize * 3; // We have 3 programs and a single geometry, so we need 3 entries (we’ll get to why the number of entries depends on the geometry count in later tutorials).
+    uint32_t shaderTableSize = mShaderTableEntrySize * 3;
 
     // For simplicity, we create the shader-table on the upload heap. You can also create it on the default heap
     mpShaderTable = createBuffer(mpDevice, shaderTableSize, D3D12_RESOURCE_FLAG_NONE, D3D12_RESOURCE_STATE_GENERIC_READ, kUploadHeapProps);
@@ -773,8 +773,8 @@ void Tutorial01::createShaderTable()
 
     // Entry 0 - ray-gen program ID and descriptor data
     memcpy(pData, pRtsoProps->GetShaderIdentifier(kRayGenShader), D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES);
-
-    // This is where we need to set the descriptor data for the ray-gen shader. We'll get to it in the next tutorial
+    uint64_t heapStart = mpSrvUavHeap->GetGPUDescriptorHandleForHeapStart().ptr;
+    *(uint64_t*)(pData + D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES) = heapStart;
 
     // Entry 1 - miss program
     memcpy(pData + mShaderTableEntrySize, pRtsoProps->GetShaderIdentifier(kMissShader), D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES);
@@ -787,6 +787,40 @@ void Tutorial01::createShaderTable()
     mpShaderTable->Unmap(0, nullptr);
 }
 
+// 6.0 01-CreateWindow.cpp
+void Tutorial01::createShaderResources()
+{
+    // Create the output resource. The dimensions and format should match the swap-chain
+    D3D12_RESOURCE_DESC resDesc = {};
+    resDesc.DepthOrArraySize = 1;
+    resDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+    resDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM; // The backbuffer is actually DXGI_FORMAT_R8G8B8A8_UNORM_SRGB, but sRGB formats can't be used with UAVs. We will convert to sRGB ourselves in the shader
+    resDesc.Flags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
+    resDesc.Width = mSwapChainSize.x;
+    resDesc.Height = mSwapChainSize.y;
+    resDesc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
+    resDesc.MipLevels = 1;
+    resDesc.SampleDesc.Count = 1;
+    d3d_call(mpDevice->CreateCommittedResource(&kDefaultHeapProps, D3D12_HEAP_FLAG_NONE, &resDesc, D3D12_RESOURCE_STATE_COPY_SOURCE, nullptr, IID_PPV_ARGS(&mpOutputResource))); // Starting as copy-source to simplify onFrameRender()
+
+    // Create an SRV/UAV descriptor heap. Need 2 entries - 1 SRV for the scene and 1 UAV for the output
+    mpSrvUavHeap = createDescriptorHeap(mpDevice, 2, D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, true);
+
+    // Create the UAV. Based on the root signature we created it should be the first entry
+    D3D12_UNORDERED_ACCESS_VIEW_DESC uavDesc = {};
+    uavDesc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
+    mpDevice->CreateUnorderedAccessView(mpOutputResource, nullptr, &uavDesc, mpSrvUavHeap->GetCPUDescriptorHandleForHeapStart());
+
+    // 6.1 Create the TLAS SRV right after the UAV. Note that we are using a different SRV desc here
+    D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+    srvDesc.ViewDimension = D3D12_SRV_DIMENSION_RAYTRACING_ACCELERATION_STRUCTURE;
+    srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+    srvDesc.RaytracingAccelerationStructure.Location = mpTopLevelAS->GetGPUVirtualAddress();
+    D3D12_CPU_DESCRIPTOR_HANDLE srvHandle = mpSrvUavHeap->GetCPUDescriptorHandleForHeapStart();
+    srvHandle.ptr += mpDevice->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+    mpDevice->CreateShaderResourceView(nullptr, &srvDesc, srvHandle);
+}
+
 //////////////////////////////////////////////////////////////////////////
 // Callbacks
 //////////////////////////////////////////////////////////////////////////
@@ -796,6 +830,7 @@ void Tutorial01::onLoad(HWND winHandle, uint32_t winWidth, uint32_t winHeight)
     initDXR(winHandle, winWidth, winHeight); // Tutorial 02
     createAccelerationStructures(); // Tutorial 03
     createRtPipelineState(); // Tutorial 04
+    createShaderResources(); // Tutorial 06. Need to do this before initializing the shader-table
     createShaderTable(); // Tutorial 05
 }
 
@@ -803,9 +838,49 @@ void Tutorial01::onFrameRender()
 {
     // 2.12 onFrameRender
     uint32_t rtvIndex = beginFrame();
-    const float clearColor[4] = { 0.4f, 0.6f, 0.2f, 1.0f };
-    resourceBarrier(mpCmdList, mFrameObjects[rtvIndex].pSwapChainBuffer, D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_RENDER_TARGET);
-    mpCmdList->ClearRenderTargetView(mFrameObjects[rtvIndex].rtvHandle, clearColor, 0, nullptr);
+
+    // 6.4 this is rasterization and no longer needed
+    //const float clearColor[4] = { 0.4f, 0.6f, 0.2f, 1.0f };
+    //resourceBarrier(mpCmdList, mFrameObjects[rtvIndex].pSwapChainBuffer, D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_RENDER_TARGET);
+    //mpCmdList->ClearRenderTargetView(mFrameObjects[rtvIndex].rtvHandle, clearColor, 0, nullptr);
+
+    // 6.4.a Let's raytrace
+    resourceBarrier(mpCmdList, mpOutputResource, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    D3D12_DISPATCH_RAYS_DESC raytraceDesc = {};
+    raytraceDesc.Width = mSwapChainSize.x;
+    raytraceDesc.Height = mSwapChainSize.y;
+    raytraceDesc.Depth = 1;
+
+    // 6.4.b RayGen is the first entry in the shader-table
+    raytraceDesc.RayGenerationShaderRecord.StartAddress = mpShaderTable->GetGPUVirtualAddress() + 0 * mShaderTableEntrySize;
+    raytraceDesc.RayGenerationShaderRecord.SizeInBytes = mShaderTableEntrySize;
+
+    // 6.4.c Miss is the second entry in the shader-table
+    size_t missOffset = 1 * mShaderTableEntrySize;
+    raytraceDesc.MissShaderTable.StartAddress = mpShaderTable->GetGPUVirtualAddress() + missOffset;
+    raytraceDesc.MissShaderTable.StrideInBytes = mShaderTableEntrySize;
+    raytraceDesc.MissShaderTable.SizeInBytes = mShaderTableEntrySize;   // Only a s single miss-entry
+
+    // 6.4.d Hit is the third entry in the shader-table
+    size_t hitOffset = 2 * mShaderTableEntrySize;
+    raytraceDesc.HitGroupTable.StartAddress = mpShaderTable->GetGPUVirtualAddress() + hitOffset;
+    raytraceDesc.HitGroupTable.StrideInBytes = mShaderTableEntrySize;
+    raytraceDesc.HitGroupTable.SizeInBytes = mShaderTableEntrySize;
+
+    // 6.4.e Bind the empty root signature
+    mpCmdList->SetComputeRootSignature(mpEmptyRootSig);
+
+    // 6.4.f Set Pipeline
+    mpCmdList->SetPipelineState1(mpPipelineState.GetInterfacePtr());
+
+    // 6.4.g Dispatch
+    mpCmdList->DispatchRays(&raytraceDesc);
+
+    // 6.4.h Copy the results to the back-buffer
+    resourceBarrier(mpCmdList, mpOutputResource, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
+    resourceBarrier(mpCmdList, mFrameObjects[rtvIndex].pSwapChainBuffer, D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_COPY_DEST);
+    mpCmdList->CopyResource(mFrameObjects[rtvIndex].pSwapChainBuffer, mpOutputResource);
+
     endFrame(rtvIndex);
 }
 

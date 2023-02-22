@@ -82,4 +82,10 @@ private:
     void createShaderTable();
     ID3D12ResourcePtr mpShaderTable;
     uint32_t mShaderTableEntrySize = 0;
+
+    // tutorial 06
+    void createShaderResources();
+    ID3D12ResourcePtr mpOutputResource;
+    ID3D12DescriptorHeapPtr mpSrvUavHeap;
+    static const uint32_t kSrvUavHeapSize = 2;
 };
