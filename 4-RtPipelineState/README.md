@@ -21,13 +21,109 @@ void createRtPipelineState();
 ID3D12StateObjectPtr mpPipelineState;
 ID3D12RootSignaturePtr mpEmptyRootSig;
 ```
-## Shader-Libraries
+## 4.1 Shader-Libraries
 dxcompiler, the new SM6.x compiler, introduces a new concept called shader-libraries. Libraries allow us to compile a file containing multiple shaders without specifying an entry point. We create shader libraries by specifying "lib_6_3" as the target profile, which requires us to use an empty string for the entry point. Using dxcompiler is straightforward but is not in the scope of this tutorial. You can take a look at compileShader() to see an example usage. 
+```c++
+// 4.1 Shader-Libraries
+#include <sstream>
+static dxc::DxcDllSupport gDxcDllHelper;
+MAKE_SMART_COM_PTR(IDxcCompiler);
+MAKE_SMART_COM_PTR(IDxcLibrary);
+MAKE_SMART_COM_PTR(IDxcBlobEncoding);
+MAKE_SMART_COM_PTR(IDxcOperationResult);
+
+ID3DBlobPtr compileLibrary(const WCHAR* filename, const WCHAR* targetString)
+{
+    // Initialize the helper
+    d3d_call(gDxcDllHelper.Initialize());
+    IDxcCompilerPtr pCompiler;
+    IDxcLibraryPtr pLibrary;
+    d3d_call(gDxcDllHelper.CreateInstance(CLSID_DxcCompiler, &pCompiler));
+    d3d_call(gDxcDllHelper.CreateInstance(CLSID_DxcLibrary, &pLibrary));
+
+    // Open and read the file
+    std::ifstream shaderFile(filename);
+    if (shaderFile.good() == false)
+    {
+        msgBox("Can't open file " + wstring_2_string(std::wstring(filename)));
+        return nullptr;
+    }
+    std::stringstream strStream;
+    strStream << shaderFile.rdbuf();
+    std::string shader = strStream.str();
+
+    // Create blob from the string
+    IDxcBlobEncodingPtr pTextBlob;
+    d3d_call(pLibrary->CreateBlobWithEncodingFromPinned((LPBYTE)shader.c_str(), (uint32_t)shader.size(), 0, &pTextBlob));
+
+    // Compile
+    IDxcOperationResultPtr pResult;
+    d3d_call(pCompiler->Compile(pTextBlob, filename, L"", targetString, nullptr, 0, nullptr, 0, nullptr, &pResult));
+
+    // Verify the result
+    HRESULT resultCode;
+    d3d_call(pResult->GetStatus(&resultCode));
+    if (FAILED(resultCode))
+    {
+        IDxcBlobEncodingPtr pError;
+        d3d_call(pResult->GetErrorBuffer(&pError));
+        std::string log = convertBlobToString(pError.GetInterfacePtr());
+        msgBox("Compiler error:\n" + log);
+        return nullptr;
+    }
+
+    MAKE_SMART_COM_PTR(IDxcBlob);
+    IDxcBlobPtr pBlob;
+    d3d_call(pResult->GetResult(&pBlob));
+    return pBlob;
+}
+```
 
 ## Ray-Tracing Shaders
 DXR introduces 5 new shader types – ray-generation, miss, closest-hit, any-hit, and intersection. All the shaders for this tutorial can be found in 04-Shaders.hlsl.
+*include 04-Shaders.hlsl and set property - Does not participate in build*
+```c++
+\\ 04-Shaders.hlsl
+RaytracingAccelerationStructure gRtScene : register(t0);
+RWTexture2D<float4> gOutput : register(u0);
 
-##Ray-Generation Shader
+float3 linearToSrgb(float3 c)
+{
+    // Based on http://chilliant.blogspot.com/2012/08/srgb-approximations-for-hlsl.html
+    float3 sq1 = sqrt(c);
+    float3 sq2 = sqrt(sq1);
+    float3 sq3 = sqrt(sq2);
+    float3 srgb = 0.662002687 * sq1 + 0.684122060 * sq2 - 0.323583601 * sq3 - 0.0225411470 * c;
+    return srgb;
+}
+
+[shader("raygeneration")]
+void rayGen()
+{  
+    uint3 launchIndex = DispatchRaysIndex();
+    float3 col = linearToSrgb(float3(0.4, 0.6, 0.2));
+    gOutput[launchIndex.xy] = float4(col, 1);
+}
+
+struct Payload
+{
+    bool hit;
+};
+
+[shader("miss")]
+void miss(inout Payload payload)
+{
+    payload.hit = false;
+}
+
+[shader("closesthit")]
+void chs(inout Payload payload, in BuiltInTriangleIntersectionAttributes attribs)
+{
+    payload.hit = true;
+}
+```
+
+## Ray-Generation Shader
 Ray-generation shader is the first stage in the ray-tracing pipeline. We will see in tutorial 06 that ray-tracing commands work on a 2D-grid. The ray-generation shader will be executed once per work item. This is where the user generates the primary-rays and dispatches ray-query calls.
 
 Here is our ray-generation shader:
