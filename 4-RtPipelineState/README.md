@@ -79,11 +79,11 @@ ID3DBlobPtr compileLibrary(const WCHAR* filename, const WCHAR* targetString)
 }
 ```
 
-## Ray-Tracing Shaders
+## 4.2 Ray-Tracing Shaders
 DXR introduces 5 new shader types – ray-generation, miss, closest-hit, any-hit, and intersection. All the shaders for this tutorial can be found in 04-Shaders.hlsl.
 *include 04-Shaders.hlsl and set property - Does not participate in build*
 ```c++
-\\ 04-Shaders.hlsl
+// 4.2 Ray-Tracing Shaders 04-Shaders.hlsl
 RaytracingAccelerationStructure gRtScene : register(t0);
 RWTexture2D<float4> gOutput : register(u0);
 
@@ -123,19 +123,22 @@ void chs(inout Payload payload, in BuiltInTriangleIntersectionAttributes attribs
 }
 ```
 
-## Ray-Generation Shader
+## 4.3 Ray-Generation Shader
 Ray-generation shader is the first stage in the ray-tracing pipeline. We will see in tutorial 06 that ray-tracing commands work on a 2D-grid. The ray-generation shader will be executed once per work item. This is where the user generates the primary-rays and dispatches ray-query calls.
 
 Here is our ray-generation shader:
 ```c++
+// 4.3.a Ray-Generation Shader
 RaytracingAccelerationStructure gRtScene : register(t0);
-RWTexture2D&lt;float4&gt; gOutput : register(u0);
-[shader(&quot;raygeneration&quot;)]
+RWTexture2D<float4> gOutput : register(u0);
+
+// 4.3.b Ray-Generation Shader
+[shader("raygeneration")]
 void rayGen()
-{
-uint3 launchIndex = DispatchRaysIndex();
-float3 col = linearToSrgb(float3(0.4, 0.6, 0.2));
-gOutput[launchIndex.xy] = float4(col, 1);
+{  
+    uint3 launchIndex = DispatchRaysIndex();
+    float3 col = linearToSrgb(float3(0.4, 0.6, 0.2));
+    gOutput[launchIndex.xy] = float4(col, 1);
 }
 ```
 
@@ -149,17 +152,19 @@ The last thing to note is DispatchRaysIndex(). This intrinsic will return the 3D
 
 The rest of the shader simply writes a constant color to the screen. In later tutorials we will see how to implement a more interesting RGS which dispatches rays.
 
-## Miss-Shader
+## 4.4 Miss-Shader
 A miss-shader will be called whenever a raytrace query did not hit any of the objects in the TLAS. Here’s our miss-shader:
 ```c++
+// 4.4.a Miss - Shader
 struct Payload
 {
-bool hit;
+    bool hit;
 };
-[shader(&quot;miss&quot;)]
+// 4.4.b Miss - Shader
+[shader("miss")]
 void miss(inout Payload payload)
 {
-payload.hit = false;
+    payload.hit = false;
 }
 ```
 
@@ -167,7 +172,7 @@ The miss-shader accepts a single inout argument – the ray payload. The ray-pay
 
 OK. Now to the last program type.
 
-## Hit-Group
+## 4.5 Hit-Group
 A hit group is a collection of Closest-Hit, Any-Hit and Intersection Shaders. It is a single state element describing how to test for intersection and what should be the behavior in case an intersection is detected.
 
 *Any Hit Shader* will be invoked whenever an intersection is found in the traversal. Its main use is to programmatically decide whether an intersection should be accepted. For example, for alpha-tested geometry we would like to ignore the intersection if the alpha test failed. The any-hit shader will be ignored for acceleration structures created with the D3D12_RAYTRACING_GEOMETRY_FLAG_OPAQUE flag. Note that there is no guarantee on the order that any-hit shaders are executed when multiple intersections are found. This means the first invocation may not be the closest intersection to the origin, and the number of times the shader is invoked for a specific ray may vary!
@@ -178,10 +183,11 @@ A hit group is a collection of Closest-Hit, Any-Hit and Intersection Shaders. It
 
 As you might recall, our acceleration structures were built with the D3D12_RAYTRACING_GEOMETRY_FLAG_OPAQUE flag and the primitive type is triangles. That means the only shader which is relevant in our case is the CHS. 
 ```c++
-[shader(&quot;closesthit&quot;)]
+// 4.5 Hit-Group
+[shader("closesthit")]
 void chs(inout Payload payload, in BuiltInTriangleIntersectionAttributes attribs)
 {
-payload.hit = true;
+    payload.hit = true;
 }
 ```
 
@@ -189,7 +195,7 @@ This shader is very similar to the miss-shader above. It accepts the payload and
 ```c++
 struct BuiltInTriangleIntersectionAttributes
 {
-float2 barycentrics;
+    float2 barycentrics;
 };
 ```
 We will see how to use these attributes in tutorial 7.
