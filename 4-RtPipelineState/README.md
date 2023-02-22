@@ -126,18 +126,24 @@ The library accepts a single ID3DBlob object which contains an SM6.1 library. Th
 
 Next, we will initialize the D3D12_STATE_SUBOBJECT. pDesc has a void* type, so we need to make sure we assign the right data structure to it. In this case, it’s a pointer to D3D12_DXIL_LIBRARY_DESC.
 ```c++
-
+stateSubobject.Type = D3D12_STATE_SUBOBJECT_TYPE_DXIL_LIBRARY;
+stateSubobject.pDesc = &amp;dxilLibDesc;
 ```
 
 Next, we clear the library desc and allocate space for the export desc and export names.
 ```c++
-
+dxilLibDesc = {};
+exportDesc.resize(entryPointCount);
+exportName.resize(entryPointCount);
 ```
 
 
 Now, assuming pBlob is not null, we can initialize the D3D12_DXIL_LIBRARY_DESC object.
 ```c++
-
+dxilLibDesc.DXILLibrary.pShaderBytecode = pBlob-&gt;GetBufferPointer();
+dxilLibDesc.DXILLibrary.BytecodeLength = pBlob-&gt;GetBufferSize();
+dxilLibDesc.NumExports = entryPointCount;
+dxilLibDesc.pExports = exportDesc.data();
 ```
 
 
@@ -145,7 +151,13 @@ We need to set the blob address, blob size, number of exports (AKA entry-points)
 
 We then go over the entry-points and initialize the D3D12_EXPORT_DESC vector.
 ```c++
-
+for (uint32_t i = 0; i &lt; entryPointCount; i++)
+{
+exportName[i] = entryPoint[i];
+exportDesc[i].Name = exportName[i].c_str();
+exportDesc[i].Flags = D3D12_EXPORT_FLAG_NONE;
+exportDesc[i].ExportToRename = nullptr;
+}
 ```
 
 
@@ -158,7 +170,9 @@ We then go over the entry-points and initialize the D3D12_EXPORT_DESC vector.
  
 Back in createRtPipelineState(), we create a DxilLibrary  object and add it to the sub-object array.
 ```c++
-
+// Create the DXIL library
+DxilLibrary dxilLib = createDxilLibrary();
+subobjects[index++] = dxilLib.stateSubobject;
 ```
 
 
@@ -166,7 +180,15 @@ We got ourselves our first sub-object object! As you can see, there’s a lot of
 ## HitProgram
 HitProgram is an abstraction over a D3D12_STATE_SUBOBJECT_TYPE_HIT_GROUP sub-object. A hit-group is a collection of intersection, any-hit and closest-hit shaders, at most one of each type. Since we don’t use custom intersection-shaders in these tutorials, our HitProgram object only accepts AHS and CHS entry point name.
 ```c++
-
+HitProgram(LPCWSTR ahsExport, LPCWSTR chsExport, const std::wstring&amp; name) : exportName(name)
+{
+desc = {};
+desc.AnyHitShaderImport = ahsExport;
+desc.ClosestHitShaderImport = chsExport;
+desc.HitGroupExport = exportName.c_str();
+subObject.Type = D3D12_STATE_SUBOBJECT_TYPE_HIT_GROUP;
+subObject.pDesc = &amp;desc;
+}
 ```
 The code should be self-explanatory. The AnyHitShaderImport and ClosestHitShaderImport reference export names declared in the DxilLibrary we created. HitGroupExport is a unique name we will use to identify this hit-group in subsequent calls.
 
@@ -177,7 +199,13 @@ Looking at createRayGenRootDesc(), you can see that creating an LRS is similar t
 
 The LRS abstraction is in LocalRootSignature:
 ```c++
-
+LocalRootSignature(ID3D12Device5Ptr pDevice, const D3D12_ROOT_SIGNATURE_DESC&amp; desc)
+{
+pRootSig = createRootSignature(pDevice, desc);
+pInterface = pRootSig.GetInterfacePtr();
+subobject.pDesc = &amp;pInterface;
+subobject.Type = D3D12_STATE_SUBOBJECT_TYPE_LOCAL_ROOT_SIGNATURE;
+}
 ```
 As you can see, we store the ID3D12RootSignature object into a member variable, then set its address into pDesc.
 
@@ -186,7 +214,15 @@ Now that we created a LocalRootSignature object, we need to associate it with on
 ## ExportAssociation
 An ExportAssociation object binds a sub-object into shaders and hit-groups. The object itself is very simple:
 ```c++
-
+ExportAssociation(const WCHAR* exportNames[], uint32_t exportCount, const D3D12_STATE_SUBOBJECT*
+pSubobjectToAssociate)
+{
+association.NumExports = exportCount;
+association.pExports = exportNames;
+association.pSubobjectToAssociate = pSubobjectToAssociate;
+subobject.Type = D3D12_STATE_SUBOBJECT_TYPE_SUBOBJECT_TO_EXPORTS_ASSOCIATION;
+subobject.pDesc = &amp;association;
+}
 ```
 
 There’s one important detail we must remember when creating an ExportAssociation object- pSubobjectToAssociate must point to an object which is part of the array we are passing into CreateStateObject(). Let’s look at how we use the last 2 objects and see what that means:
@@ -195,7 +231,16 @@ First, we create the local root-signature for the ray-generation shader. We then
 
 The next bit of code creates an empty local root-signature and binds it to the miss-shader and the hit-program. We need to bind an LRS for every object we export from our DxilLibrary. 
 ```c++
-
+// Create the miss- and hit-programs root-signature and association
+D3D12_ROOT_SIGNATURE_DESC emptyDesc = {};
+emptyDesc.Flags = D3D12_ROOT_SIGNATURE_FLAG_LOCAL_ROOT_SIGNATURE;
+LocalRootSignature hitMissRootSignature(mpDevice, emptyDesc);
+subobjects[index] = hitMissRootSignature.subobject;
+uint32_t hitMissRootIndex = index++;
+const WCHAR* missHitExportName[] = { kMissShader, kClosestHitShader };
+ExportAssociation missHitRootAssociation(missHitExportName, arraysize(missHitExportName),
+&amp;(subobjects[hitMissRootIndex]));
+subobjects[index++] = missHitRootAssociation.subobject;
 ```
 An important detail to point out is that we are not using the hit group name specified earlier in the HitProgram sub-object. The official Windows 10 DXR release initially included an issue preventing associations with hit group names from working correctly. Normally, we would prefer to use hitProgram.exportName.c_str(), but until this is fixed you must include every entry point in the hit group when creating ExportAssociation objects. Currently, we only have one closest-hit shader.
 
@@ -204,11 +249,25 @@ Next bit is the shader configuration. There are 2 values we need to set:
 * The payload size in bytes. This is the size of the payload struct we defined in the HLSL. In our case the payload is a single bool (4-bytes in HLSL).
 * The attributes size in bytes. This is the size of the data the hit-shader accepts as its intersection-attributes parameter. For the built-in intersection shader, the attributes size is 8-bytes (2 floats).
 ```c++
-
+ShaderConfig(uint32_t maxAttributeSizeInBytes, uint32_t maxPayloadSizeInBytes)
+{
+shaderConfig.MaxAttributeSizeInBytes = maxAttributeSizeInBytes;
+shaderConfig.MaxPayloadSizeInBytes = maxPayloadSizeInBytes;
+subobject.Type = D3D12_STATE_SUBOBJECT_TYPE_RAYTRACING_SHADER_CONFIG;
+subobject.pDesc = &amp;shaderConfig;
+}
 ```
 The code should be self-explanatory. Once we create a ShaderConfig object, we need to associate it with our shaders, which is what the following snippet does.
 ```c++
+// Bind the payload size to the programs
+ShaderConfig shaderConfig(sizeof(float)*2, sizeof(float)*1);
+subobjects[index] = shaderConfig.subobject;
+uint32_t shaderConfigIndex = index++;
+const WCHAR* shaderExports[] = { kMissShader, kClosestHitShader, kRayGenShader };
+ExportAssociation configAssociation(shaderExports, arraysize(shaderExports),
+&amp;(subobjects[shaderConfigIndex]));
 
+subobjects[index++] = configAssociation.subobject;
 ```
 
 
@@ -217,27 +276,46 @@ Again, note that the ExportAssociation object accepts the address of a sub-objec
 ## PipelineConfig
 The pipeline configuration is a global sub-object affecting all pipeline stages. In the case of raytracing, it contains a single value - MaxTraceRecursionDepth. This value simply tells the pipeline how many recursive raytracing calls we are going to make. Our object looks as follows:
 ```c++
-
+PipelineConfig(uint32_t maxTraceRecursionDepth)
+{
+config.MaxTraceRecursionDepth = maxTraceRecursionDepth;
+subobject.Type = D3D12_STATE_SUBOBJECT_TYPE_RAYTRACING_PIPELINE_CONFIG;
+subobject.pDesc = &amp;config;
+}
 ```
 Since our ray-generation shader doesn’t make any raytracing calls, we set this value to 0.
 ```c++
-
+// Create the pipeline config
+PipelineConfig config(0);
+subobjects[index++] = config.subobject;
 ```
 ## GlobalRootSignature
 The last piece of the puzzle is the global root-signature. As the name suggests, this root-signature affects all shaders attached to the pipeline. The final root-signature of a shader is defined by both the global and the shader’s local root-signature. The code is straightforward. This is how we initialize the GlobalRootSignature object:
 ```c++
-
+GlobalRootSignature(ID3D12Device5Ptr pDevice, const D3D12_ROOT_SIGNATURE_DESC&amp; desc)
+{
+pRootSig = createRootSignature(pDevice, desc);
+pInterface = pRootSig.GetInterfacePtr();
+subobject.pDesc = &amp;pInterface;
+subobject.Type = D3D12_STATE_SUBOBJECT_TYPE_GLOBAL_ROOT_SIGNATURE;
+}
 ```
 And this is how we use it, setting the global root-signature to an empty signature:
 ```c++
-
+GlobalRootSignature root(mpDevice, {});
+mpEmptyRootSig = root.pRootSig;
+subobjects[index++] = root.subobject;
 ```
 
 
 ## CreateStateObject
 Now that we initialized our array of D3D12_STATE_SUBOBJECT, we can finally create the ID3D12StateObject object. This is done using the following, simple snippet:
 ```c++
-
+D3D12_STATE_OBJECT_DESC desc;
+desc.NumSubobjects = index;
+desc.pSubobjects = subobjects.data();
+desc.Type = D3D12_STATE_OBJECT_TYPE_RAYTRACING_PIPELINE;
+d3d_call(mpDevice-&gt;CreateStateObject(&amp;desc, IID_PPV_ARGS(&amp;mpPipelineState)));
 ```
 And we’re done!
 There are more details and fine-print related to how to use sub-object and create a state-objects. I strongly suggest you read the spec to get all the details, but for now we have enough to work with.
