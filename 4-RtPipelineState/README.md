@@ -209,7 +209,77 @@ We will see how to use these attributes in tutorial 7.
 Now that we learnt about the new shader types, we can create our RTPSO. As mentioned before, creating an RTPSO is different from the way we created PSOs in DX12. Instead of a struct similar to D3D12_GRAPHICS_PIPELINE_STATE_DESC, we are going to build an array of D3D12_STATE_SUBOBJECT. Each sub-object describes a single element of the state. Most sub-objects reference other data structures, so we need to make sure all the referenced objects are valid when we call CreateStateObject(). For that reason, we are going to create a simple abstraction for each sub-object type.
 
 ```c++
+// 4.6 Creating the RT Pipeline State Object
+void Tutorial01::createRtPipelineState()
+{
+    // Need 10 subobjects:
+    //  1 for the DXIL library
+    //  1 for hit-group
+    //  2 for RayGen root-signature (root-signature and the subobject association)
+    //  2 for the root-signature shared between miss and hit shaders (signature and association)
+    //  2 for shader config (shared between all programs. 1 for the config, 1 for association)
+    //  1 for pipeline config
+    //  1 for the global root signature
 
+    // 4.6.a
+    std::array<D3D12_STATE_SUBOBJECT, 10> subobjects;
+    uint32_t index = 0;
+
+    // 4.6.k Create the DXIL library
+    DxilLibrary dxilLib = createDxilLibrary();
+    subobjects[index++] = dxilLib.stateSubobject; // 0 Library
+    // 4.7.b createRtPipelineState
+    HitProgram hitProgram(nullptr, kClosestHitShader, kHitGroup);
+    subobjects[index++] = hitProgram.subObject; // 1 Hit Group
+
+    // 4.8.e Create the ray-gen root-signature and association
+    LocalRootSignature rgsRootSignature(mpDevice, createRayGenRootDesc().desc);
+    subobjects[index] = rgsRootSignature.subobject; // 2 RayGen Root Sig
+
+    // 4.8.a createRtPipelineState
+    uint32_t rgsRootIndex = index++; // 2
+    ExportAssociation rgsRootAssociation(&kRayGenShader, 1, &(subobjects[rgsRootIndex]));
+    subobjects[index++] = rgsRootAssociation.subobject; // 3 Associate Root Sig to RGS
+
+    // 4.8.b Create the miss- and hit-programs root-signature and association
+    D3D12_ROOT_SIGNATURE_DESC emptyDesc = {};
+    emptyDesc.Flags = D3D12_ROOT_SIGNATURE_FLAG_LOCAL_ROOT_SIGNATURE;
+    LocalRootSignature hitMissRootSignature(mpDevice, emptyDesc);
+    subobjects[index] = hitMissRootSignature.subobject; // 4 Root Sig to be shared between Miss and CHS
+
+    // 4.8.c
+    uint32_t hitMissRootIndex = index++; // 4
+    const WCHAR* missHitExportName[] = { kMissShader, kClosestHitShader };
+    ExportAssociation missHitRootAssociation(missHitExportName, arraysize(missHitExportName), &(subobjects[hitMissRootIndex]));
+    subobjects[index++] = missHitRootAssociation.subobject; // 5 Associate Root Sig to Miss and CHS
+
+    // 4.9.a Bind the payload size to the programs
+    ShaderConfig shaderConfig(sizeof(float) * 2, sizeof(float) * 1);
+    subobjects[index] = shaderConfig.subobject; // 6 Shader Config
+
+    // 4.9.b
+    uint32_t shaderConfigIndex = index++; // 6
+    const WCHAR* shaderExports[] = { kMissShader, kClosestHitShader, kRayGenShader };
+    ExportAssociation configAssociation(shaderExports, arraysize(shaderExports), &(subobjects[shaderConfigIndex]));
+    subobjects[index++] = configAssociation.subobject; // 7 Associate Shader Config to Miss, CHS, RGS
+
+    // 4.10.a Create the pipeline config
+    PipelineConfig config(0);
+    subobjects[index++] = config.subobject; // 8
+
+    // 4.11.a Create the global root signature and store the empty signature
+    GlobalRootSignature root(mpDevice, {});
+    mpEmptyRootSig = root.pRootSig;
+    subobjects[index++] = root.subobject; // 9
+
+    // 4.12 Create the state
+    D3D12_STATE_OBJECT_DESC desc;
+    desc.NumSubobjects = index; // 10
+    desc.pSubobjects = subobjects.data();
+    desc.Type = D3D12_STATE_OBJECT_TYPE_RAYTRACING_PIPELINE;
+
+    d3d_call(mpDevice->CreateStateObject(&desc, IID_PPV_ARGS(&mpPipelineState)));
+}
 ```
 
 Let’s go over the code in createRtPipelineState().
