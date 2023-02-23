@@ -312,7 +312,7 @@ Next, we will initialize the D3D12_STATE_SUBOBJECT. pDesc has a void* type, so w
 ```c++
 // 4.6.e
 stateSubobject.Type = D3D12_STATE_SUBOBJECT_TYPE_DXIL_LIBRARY;
-stateSubobject.pDesc = &amp;dxilLibDesc;
+stateSubobject.pDesc = &dxilLibDesc;
 ```
 
 Next, we clear the library desc and allocate space for the export desc and export names.
@@ -327,8 +327,8 @@ exportName.resize(entryPointCount);
 Now, assuming pBlob is not null, we can initialize the D3D12_DXIL_LIBRARY_DESC object.
 ```c++
 // 4.6.g
-dxilLibDesc.DXILLibrary.pShaderBytecode = pBlob-&gt;GetBufferPointer();
-dxilLibDesc.DXILLibrary.BytecodeLength = pBlob-&gt;GetBufferSize();
+dxilLibDesc.DXILLibrary.pShaderBytecode = pBlob->GetBufferPointer();
+dxilLibDesc.DXILLibrary.BytecodeLength = pBlob->GetBufferSize();
 dxilLibDesc.NumExports = entryPointCount;
 dxilLibDesc.pExports = exportDesc.data();
 ```
