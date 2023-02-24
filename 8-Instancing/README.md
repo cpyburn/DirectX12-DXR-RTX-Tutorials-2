@@ -82,11 +82,42 @@ Finally, we need to transpose our transformation matrix. This is an implementati
 And we’re good to go. No other changes are required, we can run the application and see this image.
 ![image](https://user-images.githubusercontent.com/17934438/221300040-d3c6cfe1-1db1-45f5-9149-e6eefb10c3ea.png)
 
-InstanceID()
+## 8.1 InstanceID()
 Actually, if you run the tutorial code you’ll see a different image then the one above. That’s because we also made a small change to the closest-hit shader (08-Shaders.hlsl). At the beginning of the shader, you can see the following line
+```c++
+uint instanceID = InstanceID();
+```
 
+Complete code with switch statement
+```c++
+[shader("closesthit")]
+void chs(inout RayPayload payload, in BuiltInTriangleIntersectionAttributes attribs)
+{
+    uint instanceID = InstanceID();
+    float3 barycentrics = float3(1.0 - attribs.barycentrics.x - attribs.barycentrics.y, attribs.barycentrics.x, attribs.barycentrics.y);
 
+    const float3 A = float3(1, 0, 0);
+    const float3 B = float3(0, 1, 0);
+    const float3 C = float3(0, 0, 1);
+
+    switch(instanceID)
+    {
+        case 0:
+            payload.color = A * barycentrics.x + B * barycentrics.y + C * barycentrics.z;
+            break;
+        case 1:
+            payload.color = B * barycentrics.x + C * barycentrics.y + A * barycentrics.z;
+            break;
+        case 2:
+            payload.color = C * barycentrics.x + A * barycentrics.y + B * barycentrics.z;
+            break;
+    }
+}
+```
 This value will receive the value we specified when we created the TLAS (D3D12_RAYTRACING_INSTANCE_DESC::InstanceID).
+
 Based on this value we change the color interpolation order. The result is 3 different looking triangles.
+![image](https://user-images.githubusercontent.com/17934438/221300748-8700b062-8101-4ae6-8c58-dc933d7dfb22.png)
+
  
 
