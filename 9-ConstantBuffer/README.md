@@ -182,4 +182,17 @@ sure that this is the case.
 And we’re done!
 ![image](https://user-images.githubusercontent.com/17934438/221318621-82e15186-8c2c-41ff-843d-3f68235d8715.png)
 
+## 9.6 Bonus: make the miss shader use the CBV
+The CBV is already created, so we need to create a root signature and associate it to the miss shader
+```c++
+// 9.6 bonus Create the miss root-signature and association
+LocalRootSignature missRootSignature(mpDevice, createHitRootDesc().desc);
+subobjects[index] = missRootSignature.subobject; // 6 Hit Root Sig
+```
+Update the shader binding table
+
+
+Let's prove it worked by using the CBV in the miss shader
+
+
 
