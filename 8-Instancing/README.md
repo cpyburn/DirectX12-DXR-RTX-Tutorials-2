@@ -15,8 +15,11 @@ Now that we know how to invoke the ray-tracing pipeline, we can get into more ad
 Instancing has 2 inputs:
 1.	Number of instances to render.
 2.	The transformation matrix for each instance.
+
 In the rasterization API, we set those inputs by 
+
 (1)	Passing (InstanceCount > 1) to DrawInstanced() or DrawIndexedInstanced().
+
 (2)	Using SV_InstanceID to control the transformation of each instance.
 
 In DXR both inputs are set during the creation of the top-level acceleration-structure (TLAS).
@@ -27,7 +30,7 @@ The bottom-level acceleration structure is the one that holds the geometric data
 
 The top-level acceleration structure then references the bottom-level acceleration structures we created. For each reference, we can optionally specify a local→world transformation matrix. Instancing is achieved by referencing the same bottom-level acceleration structure multiple times with different matrices.
 
-## Code Walkthrough
+## 8.0 Code Walkthrough
 We are going to modify our application to render 3 instances of the triangle.
 There is no need to change the creation of the bottom-level acceleration structure. We only need to make a small change to the TLAS creation code - createTopLevelAS().
 
@@ -35,11 +38,18 @@ The first thing we need is to change the call to GetRaytracingAccelerationStruct
 
 Then, we need to change the size of the D3D12_RAYTRACING_INSTANCE_DESC buffer. We need size for 3 descriptors.
 ```c++
+// 8.0.a 
+inputs.NumDescs = 3;
+```
+
+```c++
+// 8.0.b
 buffers.pInstanceDesc = createBuffer(pDevice, sizeof(D3D12_RAYTRACING_INSTANCE_DESC) * 3,
 D3D12_RESOURCE_FLAG_NONE, D3D12_RESOURCE_STATE_GENERIC_READ, kUploadHeapProps);
 ```
 Next, let’s create the transformation matrices.
 ```c++
+// 8.0.c createTopLevelAS
 mat4 transformation[3];
 transformation[0] = mat4(); // Identity
 transformation[1] = translate(mat4(), vec3(-2, 0, 0));
@@ -48,15 +58,16 @@ transformation[2] = translate(mat4(), vec3(2, 0, 0));
 
 Now we can go ahead and initialize the D3D12_RAYTRACING_INSTANCE_DESC buffer.
 ```c++
-for (uint32_t i = 0; i &lt; 3; i++)
+// 8.0.d
+for (uint32_t i = 0; i < 3; i++)
 {
- instanceDescs[i].InstanceID = i;
- instanceDescs[i].InstanceContributionToHitGroupIndex = 0;
- instanceDescs[i].Flags = D3D12_RAYTRACING_INSTANCE_FLAG_NONE;
- mat4 m = transpose(transformation[i]); // GLM is column major, the INSTANCE_DESC is row major
- memcpy(instanceDescs[i].Transform, &amp;m, sizeof(instanceDescs[i].Transform));
- instanceDescs[i].AccelerationStructure = pBottomLevelAS-&gt;GetGPUVirtualAddress();
- instanceDescs[i].InstanceMask = 0xFF;
+    pInstanceDesc[i].InstanceID = i; // This value will be exposed to the shader via InstanceID()
+    pInstanceDesc[i].InstanceContributionToHitGroupIndex = 0; // This is the offset inside the shader-table. We only have a single geometry, so the offset 0
+    pInstanceDesc[i].Flags = D3D12_RAYTRACING_INSTANCE_FLAG_NONE;
+    mat4 m = transpose(transformation[i]); // GLM is column major, the INSTANCE_DESC is row major
+    memcpy(pInstanceDesc[i].Transform, &m, sizeof(pInstanceDesc[i].Transform));
+    pInstanceDesc[i].AccelerationStructure = pBottomLevelAS->GetGPUVirtualAddress();
+    pInstanceDesc[i].InstanceMask = 0xFF;
 }
 ```
 
@@ -69,7 +80,7 @@ Next, note that we are using the same InstanceContributionToHitGroupIndex. This 
 Finally, we need to transpose our transformation matrix. This is an implementation detail – our math library uses column-major matrices while DRXT expects Transform in row-major format.
 
 And we’re good to go. No other changes are required, we can run the application and see this image.
- 
+![image](https://user-images.githubusercontent.com/17934438/221300040-d3c6cfe1-1db1-45f5-9149-e6eefb10c3ea.png)
 
 InstanceID()
 Actually, if you run the tutorial code you’ll see a different image then the one above. That’s because we also made a small change to the closest-hit shader (08-Shaders.hlsl). At the beginning of the shader, you can see the following line
