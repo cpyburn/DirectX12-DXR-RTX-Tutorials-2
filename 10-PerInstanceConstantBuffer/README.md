@@ -59,7 +59,7 @@ ID3D12ResourcePtr mpConstantBuffer[3];
 ```
 
 ```c++
-// 10.
+// 10.b
 for(uint32_t i = 0 ; i < 3 ; i++)
 {
     const uint32_t bufferSize = sizeof(vec4) * 3;
@@ -86,47 +86,68 @@ TraceRay() function. The maximum allowed value is 15.
 ## Ray-Generation Program
 This is an easy one. It’s the entry pointed by the StartAddress.
 ## Miss Program
+```
 The entry is (MissStartAddress + MissShaderIndex * MissStrideInBytes).
+```
 ## Hit Program
 The entry index is:
-
-And the entry address is (HitStartAddress + entryIndex * HitStrideInBytes)
-
-There are 2 new elements here:
-InstanceContributionToHitGroupIndex– This value is specified when creating the TLAS, as part of
-D3D12_RAYTRACING_INSTANCE_DESC.
-GeometryIndex – As you might recall, when creating a bottom-level acceleration structure we can
-specify multiple geometries by passing multiple D3D12_RAYTRACING_GEOMETRY_DESC. The GeometryIndex
-is the index of the geometry inside the bottom-level acceleration structure. In our case, we have a single
-geometry so this value is always 0.
-This indexing scheme allows some flexibility in the way the shader-table records are laid out. See the
-DXR specification for examples.
-In our case, we will go with the following simple layout:
-
-This only requires us to change the InstanceContributionToHitGroupIndex field of
-D3D12_RAYTRACING_INSTANCE_DESC structure when creating the TLAS.
-
+```
 entryIndex =
 InstanceContributionToHitGroupIndex +
 GeometryIndex * MultiplierForGeometryContributionToShaderIndex +
 RayContributionToHitGroupIndex)
+```
+```
+And the entry address is (HitStartAddress + entryIndex * HitStrideInBytes)
+```
 
-RayGen Miss Hit
-Instance 0
-Hit
-Instance 1
-Hit
-Instance 2
+There are 2 new elements here:
+* InstanceContributionToHitGroupIndex– This value is specified when creating the TLAS, as part of
+D3D12_RAYTRACING_INSTANCE_DESC.
+* GeometryIndex – As you might recall, when creating a bottom-level acceleration structure we can
+specify multiple geometries by passing multiple D3D12_RAYTRACING_GEOMETRY_DESC. The GeometryIndex
+is the index of the geometry inside the bottom-level acceleration structure. In our case, we have a single
+geometry so this value is always 0.
+
+This indexing scheme allows some flexibility in the way the shader-table records are laid out. See the
+DXR specification for examples.
+
+In our case, we will go with the following simple layout:
+![image](https://user-images.githubusercontent.com/17934438/221327215-bedd5898-a4a2-4b0c-a07b-9cb14af3ac98.png)
+
+This only requires us to change the InstanceContributionToHitGroupIndex field of
+D3D12_RAYTRACING_INSTANCE_DESC structure when creating the TLAS.
 
 We have no real use for either MultiplierForGeometryContributionToShaderIndex or
 RayContributionToHitGroupIndex. We will set both to zero.
+
 You can see the change in line 375 (createTopLevelAS()). `i` is the instance index, in the range [0,3).
 
-Shader Table
+```
+// 10.3
+pInstanceDesc[i].InstanceContributionToHitGroupIndex = i;  // This is the offset inside the shader-table. Since we have unique constant-buffer for each instance, we need a different offset
+```
+
+## 10.4 Shader Table
 The first thing we need to change in the shader-table size. We now need 5 entries. This affect the
 shader-table size we calculate (line 604):
+```c++
+// 10.4.a
+uint32_t shaderTableSize = mShaderTableEntrySize * 5;
+```
 
 Finally, we need to initialize the 3 hit-program entries (lines 797-804):
+```c++
+// 10.4.b Entries 2-4 - The triangles' hit program. ProgramID and constant-buffer data
+for (uint32_t i = 0; i < 3; i++)
+{
+    uint8_t* pHitEntry = pData + mShaderTableEntrySize * (i + 2); // +2 skips the ray-gen and miss entries
+    memcpy(pHitEntry, pRtsoProps->GetShaderIdentifier(kHitGroup), D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES);
+    uint8_t* pCbDesc = pHitEntry + D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES;            // The location of the root-descriptor
+    assert(((uint64_t)pCbDesc % 8) == 0); // Root descriptor must be stored at an 8-byte aligned address
+    *(D3D12_GPU_VIRTUAL_ADDRESS*)pCbDesc = mpConstantBuffer[i]->GetGPUVirtualAddress();
+}
+```
 
 This code is very similar to the code from tutorial 9. We calculate the address of the hit entry, then set
 the program identifier and the constant-buffer address of the current instance.
