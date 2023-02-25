@@ -113,6 +113,7 @@ This indexing scheme allows some flexibility in the way the shader-table records
 DXR specification for examples.
 
 In our case, we will go with the following simple layout:
+
 ![image](https://user-images.githubusercontent.com/17934438/221327215-bedd5898-a4a2-4b0c-a07b-9cb14af3ac98.png)
 
 This only requires us to change the InstanceContributionToHitGroupIndex field of
