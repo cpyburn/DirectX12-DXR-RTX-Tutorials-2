@@ -158,6 +158,7 @@ entries, so we set raytraceDesc.HitGroupTable.SizeInBytes to mShaderTableEntrySi
 
 In our case, those changes result in the same image as in tutorial 9. However, now that we understand
 shader-table indexing we can start covering more advanced usages. We’ll get to that in the next tutorial.
+![image](https://user-images.githubusercontent.com/17934438/221327968-8264e38d-67c6-4fe2-bc6b-bf63b00b13ae.png)
 
 
 
