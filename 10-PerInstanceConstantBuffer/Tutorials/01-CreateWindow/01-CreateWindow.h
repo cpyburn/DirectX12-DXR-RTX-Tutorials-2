@@ -91,5 +91,6 @@ private:
 
     // 9.0 
     void createConstantBuffer();
-    ID3D12ResourcePtr mpConstantBuffer;
+    // 10.2.a 01-CreateWindow.h
+    ID3D12ResourcePtr mpConstantBuffer[3];
 };

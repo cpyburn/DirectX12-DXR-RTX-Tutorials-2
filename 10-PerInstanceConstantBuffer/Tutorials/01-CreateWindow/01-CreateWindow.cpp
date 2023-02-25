@@ -376,7 +376,8 @@ AccelerationStructureBuffers createTopLevelAS(ID3D12Device5Ptr pDevice, ID3D12Gr
     for (uint32_t i = 0; i < 3; i++)
     {
         pInstanceDesc[i].InstanceID = i; // This value will be exposed to the shader via InstanceID()
-        pInstanceDesc[i].InstanceContributionToHitGroupIndex = 0; // This is the offset inside the shader-table. We only have a single geometry, so the offset 0
+        // 10.3
+        pInstanceDesc[i].InstanceContributionToHitGroupIndex = i;  // This is the offset inside the shader-table. Since we have unique constant-buffer for each instance, we need a different offset
         pInstanceDesc[i].Flags = D3D12_RAYTRACING_INSTANCE_FLAG_NONE;
         mat4 m = transpose(transformation[i]); // GLM is column major, the INSTANCE_DESC is row major
         memcpy(pInstanceDesc[i].Transform, &m, sizeof(pInstanceDesc[i].Transform));
@@ -729,11 +730,16 @@ void Tutorial01::createConstantBuffer()
         vec4(0.0f, 1.0f, 1.0f, 1.0f),
     };
 
-    mpConstantBuffer = createBuffer(mpDevice, sizeof(bufferData), D3D12_RESOURCE_FLAG_NONE, D3D12_RESOURCE_STATE_GENERIC_READ, kUploadHeapProps);
-    uint8_t* pData;
-    d3d_call(mpConstantBuffer->Map(0, nullptr, (void**)&pData));
-    memcpy(pData, bufferData, sizeof(bufferData));
-    mpConstantBuffer->Unmap(0, nullptr);
+    // 10.2.b
+    for (uint32_t i = 0; i < 3; i++)
+    {
+        const uint32_t bufferSize = sizeof(vec4) * 3;
+        mpConstantBuffer[i] = createBuffer(mpDevice, bufferSize, D3D12_RESOURCE_FLAG_NONE, D3D12_RESOURCE_STATE_GENERIC_READ, kUploadHeapProps);
+        uint8_t* pData;
+        d3d_call(mpConstantBuffer[i]->Map(0, nullptr, (void**)&pData));
+        memcpy(pData, &bufferData[i * 3], sizeof(bufferData));
+        mpConstantBuffer[i]->Unmap(0, nullptr);
+    }
 }
 
 // 4.6 Creating the RT Pipeline State Object
@@ -831,7 +837,8 @@ void Tutorial01::createShaderTable()
     mShaderTableEntrySize = D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES;
     mShaderTableEntrySize += 8; // The ray-gen's descriptor table
     mShaderTableEntrySize = align_to(D3D12_RAYTRACING_SHADER_RECORD_BYTE_ALIGNMENT, mShaderTableEntrySize);
-    uint32_t shaderTableSize = mShaderTableEntrySize * 3; // We have 3 programs and a single geometry, so we need 3 entries (we’ll get to why the number of entries depends on the geometry count in later tutorials).
+    // 10.4.a
+    uint32_t shaderTableSize = mShaderTableEntrySize * 5;
 
     // For simplicity, we create the shader-table on the upload heap. You can also create it on the default heap
     mpShaderTable = createBuffer(mpDevice, shaderTableSize, D3D12_RESOURCE_FLAG_NONE, D3D12_RESOURCE_STATE_GENERIC_READ, kUploadHeapProps);
@@ -856,13 +863,15 @@ void Tutorial01::createShaderTable()
     // Entry 1 - miss program
     memcpy(pData + mShaderTableEntrySize, pRtsoProps->GetShaderIdentifier(kMissShader), D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES);
 
-    // 9.5 The Shader Table
-    // Entry 2 - hit program. Program ID and one constant-buffer as root descriptor    
-    uint8_t* pHitEntry = pData + mShaderTableEntrySize * 2; // +2 skips the ray-gen and miss entries
-    memcpy(pHitEntry, pRtsoProps->GetShaderIdentifier(kHitGroup), D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES);
-    uint8_t* pCbDesc = pHitEntry + D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES;  // Adding `progIdSize` gets us to the location of the constant-buffer entry
-    assert(((uint64_t)pCbDesc % 8) == 0); // Root descriptor must be stored at an 8-byte aligned address
-    *(D3D12_GPU_VIRTUAL_ADDRESS*)pCbDesc = mpConstantBuffer->GetGPUVirtualAddress();
+    // 10.4.b Entries 2-4 - The triangles' hit program. ProgramID and constant-buffer data
+    for (uint32_t i = 0; i < 3; i++)
+    {
+        uint8_t* pHitEntry = pData + mShaderTableEntrySize * (i + 2); // +2 skips the ray-gen and miss entries
+        memcpy(pHitEntry, pRtsoProps->GetShaderIdentifier(kHitGroup), D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES);
+        uint8_t* pCbDesc = pHitEntry + D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES;            // The location of the root-descriptor
+        assert(((uint64_t)pCbDesc % 8) == 0); // Root descriptor must be stored at an 8-byte aligned address
+        *(D3D12_GPU_VIRTUAL_ADDRESS*)pCbDesc = mpConstantBuffer[i]->GetGPUVirtualAddress();
+    }
 
     // Unmap
     mpShaderTable->Unmap(0, nullptr);
