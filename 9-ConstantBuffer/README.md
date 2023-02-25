@@ -8,116 +8,224 @@ Requirements:
 - [Windows 10 SDK version 1809 (10.0.17763.0)](https://developer.microsoft.com/en-us/windows/downloads/sdk-archive)
 - Visual Studio 2022
 
-# DXR Tutorial 08
-## Instancing
-## Overview
-Now that we know how to invoke the ray-tracing pipeline, we can get into more advanced usage. We will start with something simple – instancing.
-Instancing has 2 inputs:
-1.	Number of instances to render.
-2.	The transformation matrix for each instance.
+# DXR Tutorial 09
+## Constant Buffers
 
-In the rasterization API, we set those inputs by 
+## 9.0 Overview
+In the previous tutorial we computed the hit-point colors based on constants defined in the shader. In
+this tutorial we will learn how to use constant-buffers with DXRT and use one to get the vertex colors
+from.
 
-(1)	Passing (InstanceCount > 1) to DrawInstanced() or DrawIndexedInstanced().
+We already learned everything we need to know for working with constant-buffers. This tutorial is more
+of an exercise - feel free to try adding constant-buffer support all by yourself.
 
-(2)	Using SV_InstanceID to control the transformation of each instance.
-
-In DXR both inputs are set during the creation of the top-level acceleration-structure (TLAS).
-## Acceleration Structures Revisited
-Recall that we have 2 types of acceleration structures – top-level and bottom-level.
-
-The bottom-level acceleration structure is the one that holds the geometric data – vertex and index buffers, strides, and vertex count. Conceptually, we can think of it as a mesh in local space.
-
-The top-level acceleration structure then references the bottom-level acceleration structures we created. For each reference, we can optionally specify a local→world transformation matrix. Instancing is achieved by referencing the same bottom-level acceleration structure multiple times with different matrices.
-
-## 8.0 Code Walkthrough
-We are going to modify our application to render 3 instances of the triangle.
-There is no need to change the creation of the bottom-level acceleration structure. We only need to make a small change to the TLAS creation code - createTopLevelAS().
-
-The first thing we need is to change the call to GetRaytracingAccelerationStructurePrebuildInfo(). We need to request the information for 3 instances – specified by the NumDescs field of D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS. Also, since this struct is reused when building the acceleration structure, this change only happens in one place.
-
-Then, we need to change the size of the D3D12_RAYTRACING_INSTANCE_DESC buffer. We need size for 3 descriptors.
+Let’s dive directly into the code.
 ```c++
-// 8.0.a 
-inputs.NumDescs = 3;
+// 9.0 
+void createConstantBuffer();
+ID3D12ResourcePtr mpConstantBuffer;
 ```
 
+## 9.1 Closest-Hit Shader
+Let’s start with modifying the shader. The changes are straightforward – we start by adding a constant-
+buffer definition.
 ```c++
-// 8.0.b
-buffers.pInstanceDesc = createBuffer(pDevice, sizeof(D3D12_RAYTRACING_INSTANCE_DESC) * 3,
-D3D12_RESOURCE_FLAG_NONE, D3D12_RESOURCE_STATE_GENERIC_READ, kUploadHeapProps);
-```
-Next, let’s create the transformation matrices.
-```c++
-// 8.0.c createTopLevelAS
-mat4 transformation[3];
-transformation[0] = mat4(); // Identity
-transformation[1] = translate(mat4(), vec3(-2, 0, 0));
-transformation[2] = translate(mat4(), vec3(2, 0, 0));
-```
-
-Now we can go ahead and initialize the D3D12_RAYTRACING_INSTANCE_DESC buffer.
-```c++
-// 8.0.d
-for (uint32_t i = 0; i < 3; i++)
+// 9.1.a
+cbuffer PerFrame : register(b0)
 {
-    pInstanceDesc[i].InstanceID = i; // This value will be exposed to the shader via InstanceID()
-    pInstanceDesc[i].InstanceContributionToHitGroupIndex = 0; // This is the offset inside the shader-table. We only have a single geometry, so the offset 0
-    pInstanceDesc[i].Flags = D3D12_RAYTRACING_INSTANCE_FLAG_NONE;
-    mat4 m = transpose(transformation[i]); // GLM is column major, the INSTANCE_DESC is row major
-    memcpy(pInstanceDesc[i].Transform, &m, sizeof(pInstanceDesc[i].Transform));
-    pInstanceDesc[i].AccelerationStructure = pBottomLevelAS->GetGPUVirtualAddress();
-    pInstanceDesc[i].InstanceMask = 0xFF;
+    float3 A[3];
+    float3 B[3];
+    float3 C[3];
 }
 ```
 
-It’s very similar to the code we had before, but there are some things to note.
-
-First, we set a different InstanceID per instance. It doesn’t have to be in sequential order (i.e. `i`). We can set it to whatever arbitrary value we want. The ray-tracing pipeline doesn’t use this value. It will be communicated to the hit-shader via the InstanceID() intrinsic.
-
-Next, note that we are using the same InstanceContributionToHitGroupIndex. This means that we will use the same shader-table record for all instances. That’s fine – we do not have any per-instance data in the hit-records.
-
-Finally, we need to transpose our transformation matrix. This is an implementation detail – our math library uses column-major matrices while DRXT expects Transform in row-major format.
-
-And we’re good to go. No other changes are required, we can run the application and see this image.
-![image](https://user-images.githubusercontent.com/17934438/221300040-d3c6cfe1-1db1-45f5-9149-e6eefb10c3ea.png)
-
-## 8.1 InstanceID()
-Actually, if you run the tutorial code you’ll see a different image then the one above. That’s because we also made a small change to the closest-hit shader (08-Shaders.hlsl). At the beginning of the shader, you can see the following line
+As you can see, we have 3 sets of vertex colors, one per triangle. We then use the instanceID to fetch
+the colors from the buffer and compute the result.
 ```c++
-uint instanceID = InstanceID();
-```
-
-Complete code with switch statement
-```c++
+// 9.1.b
 [shader("closesthit")]
 void chs(inout RayPayload payload, in BuiltInTriangleIntersectionAttributes attribs)
 {
     uint instanceID = InstanceID();
     float3 barycentrics = float3(1.0 - attribs.barycentrics.x - attribs.barycentrics.y, attribs.barycentrics.x, attribs.barycentrics.y);
-
-    const float3 A = float3(1, 0, 0);
-    const float3 B = float3(0, 1, 0);
-    const float3 C = float3(0, 0, 1);
-
-    switch(instanceID)
-    {
-        case 0:
-            payload.color = A * barycentrics.x + B * barycentrics.y + C * barycentrics.z;
-            break;
-        case 1:
-            payload.color = B * barycentrics.x + C * barycentrics.y + A * barycentrics.z;
-            break;
-        case 2:
-            payload.color = C * barycentrics.x + A * barycentrics.y + B * barycentrics.z;
-            break;
-    }
+    payload.color = A[instanceID] * barycentrics.x + B[instanceID] * barycentrics.y + C[instanceID] * barycentrics.z;
 }
 ```
-This value will receive the value we specified when we created the TLAS (D3D12_RAYTRACING_INSTANCE_DESC::InstanceID).
 
-Based on this value we change the color interpolation order. The result is 3 different looking triangles.
-![image](https://user-images.githubusercontent.com/17934438/221300748-8700b062-8101-4ae6-8c58-dc933d7dfb22.png)
+## 9.2 Modifying the RTPSO Creation
+Up until now, we created the hit-program with an empty root-signature. Now that the closest-hit shader
+requires a constant-buffer, we need a different root-signature.
 
- 
+We will create a root-signature with a single entry – a root-descriptor for a Constant-Buffer View (CBV).
+If you’ll take a look at createRtPipelineState(), you’ll see that we added 2 new sub-objects:
+* A LocalRootSignature for the hit-program created by calling createHitRootDesc().
+* An ExportAssociation that associates the hit-program local root-signature to the hit-group.
+```c++
+//  9.2.a 2 for hit-program root-signature (root-signature and the subobject association)
+//  9.2.b 2 for miss-shader root-signature (signature and association)
+```
+```c++
+// 9.2.c create method for HitRootDesc
+RootSignatureDesc createHitRootDesc()
+{
+    RootSignatureDesc desc;
+    desc.rootParams.resize(1);
+    desc.rootParams[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
+    desc.rootParams[0].Descriptor.RegisterSpace = 0;
+    desc.rootParams[0].Descriptor.ShaderRegister = 0;
+
+    desc.desc.NumParameters = 1;
+    desc.desc.pParameters = desc.rootParams.data();
+    desc.desc.Flags = D3D12_ROOT_SIGNATURE_FLAG_LOCAL_ROOT_SIGNATURE;
+
+    return desc;
+}
+```
+Create the hit group root sig and associate it
+```c++
+// 9.2.d Create the hit root-signature and association
+LocalRootSignature hitRootSignature(mpDevice, createHitRootDesc().desc);
+subobjects[index] = hitRootSignature.subobject; // 4 Hit Root Sig
+
+uint32_t hitRootIndex = index++; // 4
+ExportAssociation hitRootAssociation(&kClosestHitShader, 1, &(subobjects[hitRootIndex]));
+subobjects[index++] = hitRootAssociation.subobject; // 5 Associate Hit Root Sig to Hit Group
+```
+
+We also removed the hit-group name from the empty root-signature association.
+```c++
+// 9.2.e Create the miss root-signature and association
+D3D12_ROOT_SIGNATURE_DESC emptyDesc = {};
+emptyDesc.Flags = D3D12_ROOT_SIGNATURE_FLAG_LOCAL_ROOT_SIGNATURE;
+LocalRootSignature missRootSignature(mpDevice, emptyDesc);
+subobjects[index] = missRootSignature.subobject; // 6 Miss Root Sig
+
+uint32_t missRootIndex = index++; // 6
+ExportAssociation missRootAssociation(&kMissShader, 1, &(subobjects[missRootIndex]));
+subobjects[index++] = missRootAssociation.subobject; // 7 Associate Miss Root Sig to Miss Shader
+```
+Don't forget to make the array a size of 12
+```c++
+// 9.2.f
+std::array<D3D12_STATE_SUBOBJECT, 12> subobjects;
+```
+
+## 9.3 Creating the Constant-Buffer
+Creating the constant-buffer is done the same way as for rasterization. This happens in
+createConstantBuffer()
+```c++
+// 9.3 create constant buffer
+void Tutorial01::createConstantBuffer()
+{
+    // The shader declares the CB with 9 float3. However, due to HLSL packing rules, we create the CB with 9 float4 (each float3 needs to start on a 16-byte boundary)
+    vec4 bufferData[] =
+    {
+        // A
+        vec4(1.0f, 0.0f, 0.0f, 1.0f),
+        vec4(0.0f, 1.0f, 0.0f, 1.0f),
+        vec4(0.0f, 0.0f, 1.0f, 1.0f),
+
+        // B
+        vec4(1.0f, 1.0f, 0.0f, 1.0f),
+        vec4(0.0f, 1.0f, 1.0f, 1.0f),
+        vec4(1.0f, 0.0f, 1.0f, 1.0f),
+
+        // C
+        vec4(1.0f, 0.0f, 1.0f, 1.0f),
+        vec4(1.0f, 1.0f, 0.0f, 1.0f),
+        vec4(0.0f, 1.0f, 1.0f, 1.0f),
+    };
+
+    mpConstantBuffer = createBuffer(mpDevice, sizeof(bufferData), D3D12_RESOURCE_FLAG_NONE, D3D12_RESOURCE_STATE_GENERIC_READ, kUploadHeapProps);
+    uint8_t* pData;
+    d3d_call(mpConstantBuffer->Map(0, nullptr, (void**)&pData));
+    memcpy(pData, bufferData, sizeof(bufferData));
+    mpConstantBuffer->Unmap(0, nullptr);
+}
+```
+If you look at the onLoad() function, you’ll notice that we create the constant-buffer before we create the shader-table. That’s because we need the constant-buffer GPU address in hand when initializing the
+shader-table.
+## 9.4 onLoad
+```c++
+createConstantBuffer(); // Tutorial 09. Yes, we need to do it before creating the shader-table
+```
+
+## 9.5 The Shader Table
+There are potentially 2 modifications we need to make in createShaderTable(). The first one is obvious
+* We need to set the CBV into the root-table. 
+* The other is subtler – we need to modify the shader-table record size.
+
+Remember that all shader-table records share the same size. The size we chose was based on the largest
+required root-table size. Up until now, the ray-generation shader required the largest table. Its root-
+signature had a single descriptor-table, which is 8 bytes.
+
+Now the closest-hit shader uses a root-descriptor, but luckily for us a root-descriptor is 8 bytes, so our
+shader-table record size can stay the same.
+
+Finally, we need to set the constant-buffer address into the root-table
+```c++
+// 9.5 The Shader Table
+// Entry 2 - hit program. Program ID and one constant-buffer as root descriptor    
+uint8_t* pHitEntry = pData + mShaderTableEntrySize * 2; // +2 skips the ray-gen and miss entries
+memcpy(pHitEntry, pRtsoProps->GetShaderIdentifier(kHitGroup), D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES);
+uint8_t* pCbDesc = pHitEntry + D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES;  // Adding `progIdSize` gets us to the location of the constant-buffer entry
+assert(((uint64_t)pCbDesc % 8) == 0); // Root descriptor must be stored at an 8-byte aligned address
+*(D3D12_GPU_VIRTUAL_ADDRESS*)pCbDesc = mpConstantBuffer->GetGPUVirtualAddress();
+```
+
+The first line skips the ray-gen and miss program entries. We then skip the program identifier to get the
+address of the root-descriptor. We then set the constant-buffer GPU virtual address.
+
+The spec requires root-descriptors to be aligned on an 8-byte address. The assertion in the code makes
+sure that this is the case.
+
+And we’re done!
+![image](https://user-images.githubusercontent.com/17934438/221318621-82e15186-8c2c-41ff-843d-3f68235d8715.png)
+
+## 9.6 Bonus: make the miss shader use the CBV
+The CBV is already created, so we need use the same root sig for both the hit and miss shaders, remove either the hit or the miss and associate both shaders to the root sig
+```c++
+// 9.6.a Bonus
+uint32_t missHitRootIndex = index++; // 4
+const WCHAR* missHitExportName[] = { kMissShader, kClosestHitShader };
+ExportAssociation missHitRootAssociation(missHitExportName, arraysize(missHitExportName), &(subobjects[missHitRootIndex]));
+subobjects[index++] = missHitRootAssociation.subobject; // 5 Associate Hit Root Sig to Miss and Hit Group 
+```
+Also update the subobject array to only have 10 sub objects
+```c++
+std::array<D3D12_STATE_SUBOBJECT, 10> subobjects;
+```
+
+Update the shader binding table
+```c++
+    // 9.6.b bonus
+    // Entry 1 - miss program
+    uint8_t* pMissEntry = pData + mShaderTableEntrySize;
+    memcpy(pMissEntry, pRtsoProps->GetShaderIdentifier(kMissShader), D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES);
+    // move to the root sig of the miss program and assign cbv
+    uint8_t* pCbDesc = pMissEntry + D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES;  // Adding `progIdSize` gets us to the location of the constant-buffer entry
+    assert(((uint64_t)pCbDesc % 8) == 0); // Root descriptor must be stored at an 8-byte aligned address
+    *(D3D12_GPU_VIRTUAL_ADDRESS*)pCbDesc = mpConstantBuffer->GetGPUVirtualAddress();
+
+    // Entry 2 - hit program. Program ID and one constant-buffer as root descriptor    
+    uint8_t* pHitEntry = pData + mShaderTableEntrySize * 2; // +2 skips the ray-gen and miss entries
+    memcpy(pHitEntry, pRtsoProps->GetShaderIdentifier(kHitGroup), D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES);
+    // move to the root sig of the hit program and assign the cbv
+    pCbDesc = pHitEntry + D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES;  // Adding `progIdSize` gets us to the location of the constant-buffer entry
+    assert(((uint64_t)pCbDesc % 8) == 0); // Root descriptor must be stored at an 8-byte aligned address
+    *(D3D12_GPU_VIRTUAL_ADDRESS*)pCbDesc = mpConstantBuffer->GetGPUVirtualAddress();
+```
+
+Let's prove it worked by using the CBV in the miss shader
+```c++
+[shader("miss")]
+void miss(inout RayPayload payload)
+{
+    payload.color = A[0];
+}
+```
+Awesome, bonus is DONE!
+![image](https://user-images.githubusercontent.com/17934438/221323878-d6feacc0-14b4-413c-b14e-abf0d648e708.png)
+
+
 
