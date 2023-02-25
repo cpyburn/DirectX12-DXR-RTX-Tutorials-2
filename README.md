@@ -19,3 +19,12 @@ Unlike Nvidia's tutorials, each tutorial builds upon the tutorial before it and 
 
 [7-BasicShaders](https://github.com/cpyburn/DirectX-DXR-RTX-Tutorials-2/tree/main/7-BasicShaders)
 ![7-BasicShaders](https://user-images.githubusercontent.com/17934438/220754928-e7daed36-cd34-44cf-a028-2c551d8393df.png)
+
+[8-Instancing](https://github.com/cpyburn/DirectX-DXR-RTX-Tutorials-2/tree/main/8-Instancing)
+![image](https://user-images.githubusercontent.com/17934438/221300748-8700b062-8101-4ae6-8c58-dc933d7dfb22.png)
+
+[9-ConstantBuffer](https://github.com/cpyburn/DirectX-DXR-RTX-Tutorials-2/tree/main/9-ConstantBuffer)
+![image](https://user-images.githubusercontent.com/17934438/221318621-82e15186-8c2c-41ff-843d-3f68235d8715.png)
+
+[9-Bonus:ConstantBuffer](https://github.com/cpyburn/DirectX-DXR-RTX-Tutorials-2/tree/main/9-BonusConstantBuffer)
+![image](https://user-images.githubusercontent.com/17934438/221323878-d6feacc0-14b4-413c-b14e-abf0d648e708.png)
