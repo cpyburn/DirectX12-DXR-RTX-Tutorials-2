@@ -392,8 +392,8 @@ AccelerationStructureBuffers createTopLevelAS(ID3D12Device5Ptr pDevice, ID3D12Gr
     for (uint32_t i = 1 /*11.3.c*/; i < 3; i++)
     {
         pInstanceDesc[i].InstanceID = i; // This value will be exposed to the shader via InstanceID()
-        // 10.3
-        pInstanceDesc[i].InstanceContributionToHitGroupIndex = i;  // This is the offset inside the shader-table. Since we have unique constant-buffer for each instance, we need a different offset
+        // 12.3.b
+        pInstanceDesc[i].InstanceContributionToHitGroupIndex = i + 1;  // The plane takes an additional entry in the shader-table, hence the +1
         pInstanceDesc[i].Flags = D3D12_RAYTRACING_INSTANCE_FLAG_NONE;
         mat4 m = transpose(transformation[i]); // GLM is column major, the INSTANCE_DESC is row major
         memcpy(pInstanceDesc[i].Transform, &m, sizeof(pInstanceDesc[i].Transform));
@@ -579,13 +579,16 @@ static const WCHAR* kRayGenShader = L"rayGen";
 static const WCHAR* kMissShader = L"miss";
 static const WCHAR* kClosestHitShader = L"chs";
 static const WCHAR* kHitGroup = L"HitGroup";
+// 12.1.f
+static const WCHAR* kPlaneChs = L"planeChs";
+static const WCHAR* kPlaneHitGroup = L"PlaneHitGroup";
 
 // 4.6.j
 DxilLibrary createDxilLibrary()
 {
     // Compile the shader
     ID3DBlobPtr pDxilLib = compileLibrary(L"Data/04-Shaders.hlsl", L"lib_6_3");
-    const WCHAR* entryPoints[] = { kRayGenShader, kMissShader, kClosestHitShader };
+    const WCHAR* entryPoints[] = { kRayGenShader, kMissShader, kPlaneChs /* 12.3.e */, kClosestHitShader};
     return DxilLibrary(pDxilLib, entryPoints, arraysize(entryPoints));
 }
 
@@ -807,8 +810,8 @@ void Tutorial01::createRtPipelineState()
     //  1 for pipeline config
     //  1 for the global root signature
 
-    // 9.2.f
-    std::array<D3D12_STATE_SUBOBJECT, 12> subobjects;
+    // 12.1.b
+    std::array<D3D12_STATE_SUBOBJECT, 13> subobjects;
     uint32_t index = 0;
 
     // 4.6.k Create the DXIL library
@@ -818,79 +821,87 @@ void Tutorial01::createRtPipelineState()
     HitProgram hitProgram(nullptr, kClosestHitShader, kHitGroup);
     subobjects[index++] = hitProgram.subObject; // 1 Hit Group
 
+    // 12.1.c  Create the plane HitProgram
+    HitProgram planeHitProgram(nullptr, kPlaneChs, kPlaneHitGroup);
+    subobjects[index++] = planeHitProgram.subObject; // 2 Plane Hit Group
+
     // 4.8.e Create the ray-gen root-signature and association
     LocalRootSignature rgsRootSignature(mpDevice, createRayGenRootDesc().desc);
-    subobjects[index] = rgsRootSignature.subobject; // 2 RayGen Root Sig
+    subobjects[index] = rgsRootSignature.subobject; // 3 RayGen Root Sig
 
     // 4.8.a createRtPipelineState
-    uint32_t rgsRootIndex = index++; // 2
+    uint32_t rgsRootIndex = index++; // 3
     ExportAssociation rgsRootAssociation(&kRayGenShader, 1, &(subobjects[rgsRootIndex]));
-    subobjects[index++] = rgsRootAssociation.subobject; // 3 Associate Root Sig to RGS
+    subobjects[index++] = rgsRootAssociation.subobject; // 4 Associate Root Sig to RGS
 
     // 9.2.d Create the hit root-signature and association
     LocalRootSignature hitRootSignature(mpDevice, createHitRootDesc().desc);
-    subobjects[index] = hitRootSignature.subobject; // 4 Hit Root Sig
+    subobjects[index] = hitRootSignature.subobject; // 5 Hit Root Sig
 
-    uint32_t hitRootIndex = index++; // 4
+    uint32_t hitRootIndex = index++; // 5
     ExportAssociation hitRootAssociation(&kClosestHitShader, 1, &(subobjects[hitRootIndex]));
-    subobjects[index++] = hitRootAssociation.subobject; // 5 Associate Hit Root Sig to Hit Group
+    subobjects[index++] = hitRootAssociation.subobject; // 6 Associate Hit Root Sig to Hit Group
 
     // 9.2.e Create the miss root-signature and association
     D3D12_ROOT_SIGNATURE_DESC emptyDesc = {};
     emptyDesc.Flags = D3D12_ROOT_SIGNATURE_FLAG_LOCAL_ROOT_SIGNATURE;
     LocalRootSignature missRootSignature(mpDevice, emptyDesc);
-    subobjects[index] = missRootSignature.subobject; // 6 Miss Root Sig
+    subobjects[index] = missRootSignature.subobject; // 7 Miss Root Sig
 
-    uint32_t missRootIndex = index++; // 6
-    ExportAssociation missRootAssociation(&kMissShader, 1, &(subobjects[missRootIndex]));
-    subobjects[index++] = missRootAssociation.subobject; // 7 Associate Miss Root Sig to Miss Shader
+    // 12.1.d
+    uint32_t emptyRootIndex = index++; // 7
+    const WCHAR* emptyRootExport[] = { kPlaneChs, kMissShader };
+    ExportAssociation emptyRootAssociation(emptyRootExport, arraysize(emptyRootExport), &(subobjects[emptyRootIndex]));
+    subobjects[index++] = emptyRootAssociation.subobject; // 8 Associate Miss Root Sig to Miss Shader
 
     // 4.9.a Bind the payload size to the programs
     ShaderConfig shaderConfig(sizeof(float) * 2, sizeof(float) * 3); // 7.1 Payload
-    subobjects[index] = shaderConfig.subobject; // 6 Shader Config
+    subobjects[index] = shaderConfig.subobject; // 9 Shader Config
 
     // 4.9.b
-    uint32_t shaderConfigIndex = index++; // 6
-    const WCHAR* shaderExports[] = { kMissShader, kClosestHitShader, kRayGenShader };
+    uint32_t shaderConfigIndex = index++; // 9
+    const WCHAR* shaderExports[] = { kMissShader, kClosestHitShader, kPlaneChs /*12.1.e*/, kRayGenShader};
     ExportAssociation configAssociation(shaderExports, arraysize(shaderExports), &(subobjects[shaderConfigIndex]));
-    subobjects[index++] = configAssociation.subobject; // 7 Associate Shader Config to Miss, CHS, RGS
+    subobjects[index++] = configAssociation.subobject; // 10 Associate Shader Config to Miss, CHS, RGS
 
     // 4.10.a Create the pipeline config
     PipelineConfig config(1); // 7.0.a
-    subobjects[index++] = config.subobject; // 8
+    subobjects[index++] = config.subobject; // 11
 
     // 4.11.a Create the global root signature and store the empty signature
     GlobalRootSignature root(mpDevice, {});
     mpEmptyRootSig = root.pRootSig;
-    subobjects[index++] = root.subobject; // 9
+    subobjects[index++] = root.subobject; // 12
 
     // 4.12 Create the state
     D3D12_STATE_OBJECT_DESC desc;
-    desc.NumSubobjects = index; // 10
+    desc.NumSubobjects = index; // 13
     desc.pSubobjects = subobjects.data();
     desc.Type = D3D12_STATE_OBJECT_TYPE_RAYTRACING_PIPELINE;
 
     d3d_call(mpDevice->CreateStateObject(&desc, IID_PPV_ARGS(&mpPipelineState)));
 }
 
-// 5.0 Shader Table Records 
+// 12.3.a
 void Tutorial01::createShaderTable()
 {
     /** The shader-table layout is as follows:
         Entry 0 - Ray-gen program
         Entry 1 - Miss program
-        Entry 2 - Hit program
+        Entry 2 - Hit program for triangle 0
+        Entry 3 - Hit program for the plane
+        Entry 4 - Hit program for triangle 1
+        Entry 5 - Hit program for triangle 2
         All entries in the shader-table must have the same size, so we will choose it base on the largest required entry.
-        The ray-gen program requires the largest entry - sizeof(program identifier) + 8 bytes for a descriptor-table.
+        The triangle hit program requires the largest entry - sizeof(program identifier) + 8 bytes for the constant-buffer root descriptor.
         The entry size must be aligned up to D3D12_RAYTRACING_SHADER_RECORD_BYTE_ALIGNMENT
     */
 
     // Calculate the size and create the buffer
     mShaderTableEntrySize = D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES;
-    mShaderTableEntrySize += 8; // The ray-gen's descriptor table
+    mShaderTableEntrySize += 8; // The hit shader constant-buffer descriptor
     mShaderTableEntrySize = align_to(D3D12_RAYTRACING_SHADER_RECORD_BYTE_ALIGNMENT, mShaderTableEntrySize);
-    // 10.4.a
-    uint32_t shaderTableSize = mShaderTableEntrySize * 5;
+    uint32_t shaderTableSize = mShaderTableEntrySize * 6;
 
     // For simplicity, we create the shader-table on the upload heap. You can also create it on the default heap
     mpShaderTable = createBuffer(mpDevice, shaderTableSize, D3D12_RESOURCE_FLAG_NONE, D3D12_RESOURCE_STATE_GENERIC_READ, kUploadHeapProps);
@@ -904,26 +915,34 @@ void Tutorial01::createShaderTable()
     mpPipelineState->QueryInterface(IID_PPV_ARGS(&pRtsoProps));
 
     // Entry 0 - ray-gen program ID and descriptor data
-    //memcpy(pData, pRtsoProps->GetShaderIdentifier(kRayGenShader), D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES);
-    // 6.2 Binding the Resources
     memcpy(pData, pRtsoProps->GetShaderIdentifier(kRayGenShader), D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES);
     uint64_t heapStart = mpSrvUavHeap->GetGPUDescriptorHandleForHeapStart().ptr;
     *(uint64_t*)(pData + D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES) = heapStart;
 
-    // This is where we need to set the descriptor data for the ray-gen shader. We'll get to it in the next tutorial
-
     // Entry 1 - miss program
     memcpy(pData + mShaderTableEntrySize, pRtsoProps->GetShaderIdentifier(kMissShader), D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES);
 
-    // 10.4.b Entries 2-4 - The triangles' hit program. ProgramID and constant-buffer data
-    for (uint32_t i = 0; i < 3; i++)
-    {
-        uint8_t* pHitEntry = pData + mShaderTableEntrySize * (i + 2); // +2 skips the ray-gen and miss entries
-        memcpy(pHitEntry, pRtsoProps->GetShaderIdentifier(kHitGroup), D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES);
-        uint8_t* pCbDesc = pHitEntry + D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES;            // The location of the root-descriptor
-        assert(((uint64_t)pCbDesc % 8) == 0); // Root descriptor must be stored at an 8-byte aligned address
-        *(D3D12_GPU_VIRTUAL_ADDRESS*)pCbDesc = mpConstantBuffer[i]->GetGPUVirtualAddress();
-    }
+    // Entry 2 - Triangle 0 hit program. ProgramID and constant-buffer data
+    uint8_t* pEntry2 = pData + mShaderTableEntrySize * 2;
+    memcpy(pEntry2, pRtsoProps->GetShaderIdentifier(kHitGroup), D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES);
+    assert(((uint64_t)(pEntry2 + D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES) % 8) == 0); // Root descriptor must be stored at an 8-byte aligned address
+    *(D3D12_GPU_VIRTUAL_ADDRESS*)(pEntry2 + D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES) = mpConstantBuffer[0]->GetGPUVirtualAddress();
+
+    // Entry 3 - Plane hit program. ProgramID only
+    uint8_t* pEntry3 = pData + mShaderTableEntrySize * 3;
+    memcpy(pEntry3, pRtsoProps->GetShaderIdentifier(kPlaneHitGroup), D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES);
+
+    // Entry 4 - Triangle 1 hit. ProgramID and constant-buffer data
+    uint8_t* pEntry4 = pData + mShaderTableEntrySize * 4;
+    memcpy(pEntry4, pRtsoProps->GetShaderIdentifier(kHitGroup), D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES);
+    assert(((uint64_t)(pEntry4 + D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES) % 8) == 0); // Root descriptor must be stored at an 8-byte aligned address
+    *(D3D12_GPU_VIRTUAL_ADDRESS*)(pEntry4 + D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES) = mpConstantBuffer[1]->GetGPUVirtualAddress();
+
+    // Entry 5 - Triangle 2 hit. ProgramID and constant-buffer data
+    uint8_t* pEntry5 = pData + mShaderTableEntrySize * 5;
+    memcpy(pEntry5, pRtsoProps->GetShaderIdentifier(kHitGroup), D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES);
+    assert(((uint64_t)(pEntry5 + D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES) % 8) == 0); // Root descriptor must be stored at an 8-byte aligned address
+    *(D3D12_GPU_VIRTUAL_ADDRESS*)(pEntry5 + D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES) = mpConstantBuffer[2]->GetGPUVirtualAddress();
 
     // Unmap
     mpShaderTable->Unmap(0, nullptr);
@@ -1008,7 +1027,8 @@ void Tutorial01::onFrameRender()
     size_t hitOffset = 2 * mShaderTableEntrySize;
     raytraceDesc.HitGroupTable.StartAddress = mpShaderTable->GetGPUVirtualAddress() + hitOffset;
     raytraceDesc.HitGroupTable.StrideInBytes = mShaderTableEntrySize;
-    raytraceDesc.HitGroupTable.SizeInBytes = mShaderTableEntrySize;
+    // 12.3.d
+    raytraceDesc.HitGroupTable.SizeInBytes = mShaderTableEntrySize * 4;
 
     // 6.4.e Bind the empty root signature
     mpCmdList->SetComputeRootSignature(mpEmptyRootSig);
