@@ -90,61 +90,54 @@ Our new shader-table will look like this:
 ![image](https://user-images.githubusercontent.com/17934438/221359382-c4667656-0e00-4986-ac49-3855373507ab.png)
 
 Let’s see how this layout works with the hit-program index computation:
-- BaseIndex is 2. It’s shared between all instances and geometries.
-- InstanceContributionToHitGroupIndex is per instance, specified when building the TLAS.
-o For instance 0 it will be 0.
-o For instance 1 it will be 2 (we need to skip both geometries in instance 0).
-o For instance 2 it will be 3.
-- GeometryIndex is generated automatically by the pipeline. This is the index of the geometry
-within an instance.
-o This value will be 0 for all the triangles, since they are the first geometry in the instance.
-o It will be 1 for the plane, since it’s the second geometry in the first instance.
-- MultiplierForGeometryContributionToShaderIndex should be 1.
-o This value doesn’t affect the triangles (their GeometryIndex is 0).
-o For the plane, (GeometryIndex *
-MultiplierForGeometryContributionToShaderIndex) will result in 1, which is the
-required offset of the record relative to the start of the instance.
 
-- RayContributionToHitGroupIndex should be 0.
+    - BaseIndex is 2. It’s shared between all instances and geometries.
+    - InstanceContributionToHitGroupIndex is per instance, specified when building the TLAS.
+        * For instance 0 it will be 0.
+        * For instance 1 it will be 2 (we need to skip both geometries in instance 0).
+        * For instance 2 it will be 3.
+    - GeometryIndex is generated automatically by the pipeline. This is the index of the geometry
+    within an instance.
+        * This value will be 0 for all the triangles, since they are the first geometry in the instance.
+        * It will be 1 for the plane, since it’s the second geometry in the first instance.
+    - MultiplierForGeometryContributionToShaderIndex should be 1.
+        * This value doesn’t affect the triangles (their GeometryIndex is 0).
+        * For the plane, (GeometryIndex *
+    MultiplierForGeometryContributionToShaderIndex) will result in 1, which is the
+    required offset of the record relative to the start of the instance.
+    - RayContributionToHitGroupIndex should be 0.
+    
 You can plug these values into the formula above to see the final value for each geometry.
 
-Shader-Table Changes
+## Shader-Table Changes
 Now that we understand the new layout and the indexing, we can make the required code changes.
+
 First, we need to create a larger shader-table. We need 6 entries in total. This happens at the beginning
 of createShaderTable().
+
 Next, we need to initialize the shader-table hit-program records. The first entry is for the triangle in
 instance 0:
-
-RayGen Miss Hit
-Instance 0
-Geom 0
-Hit
-Instance 0
-Geom 1
-Hit
-Instance 1
-Geom 0
-Hit
-Instance 2
-Geom 0
-
+```c++
 // Entry 2 - Triangle 0 hit program. ProgramID and constant-buffer data
 uint8_t* pEntry2 = pData + mShaderTableEntrySize * 2;
 memcpy(pEntry2, pRtsoProps-&gt;GetShaderIdentifier(kTriHitGroup), progIdSize);
 *(D3D12_GPU_VIRTUAL_ADDRESS*)(pEntry2 + progIdSize) = mpConstantBuffer[0]-&gt;GetGPUVirtualAddress();
 
+```
+
 This code is similar to the code from the previous tutorials.
+
 Now let’s initialize the entry for the plane. We have no shader resources, so we only need to set the
 program identifier of the plane hit-program.
 
 Entries 4 and 5 are for the 2 other triangles. The code is very similar to the code we used for the first
 triangle. You can find the code at lines 861-871.
+
 Three final changes:
-- We need to change the InstanceContributionToHitGroupIndex for the second and third
-instances. This happens during TLAS creation, on line 410.
-- Hit the ray-generation shader (12-Shaders.hlsl), we need to change the TraceRay() call. We
-need to pass `1` as the MultiplierForGeometryContributionToShaderIndex argument.
-- In onFrameRender(), set raytraceDesc.HitGroupTable.SizeInBytes to mShaderTableEntrySize
-* 4.
+    - We need to change the InstanceContributionToHitGroupIndex for the second and third
+    instances. This happens during TLAS creation, on line 410.
+    - Hit the ray-generation shader (12-Shaders.hlsl), we need to change the TraceRay() call. We
+    need to pass `1` as the MultiplierForGeometryContributionToShaderIndex argument.
+    - In onFrameRender(), set raytraceDesc.HitGroupTable.SizeInBytes to mShaderTableEntrySize * 4.
 
 And that should do it!
