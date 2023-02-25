@@ -691,6 +691,51 @@ struct GlobalRootSignature
     D3D12_STATE_SUBOBJECT subobject = {};
 };
 
+// 9.2.c create method for HitRootDesc
+RootSignatureDesc createHitRootDesc()
+{
+    RootSignatureDesc desc;
+    desc.rootParams.resize(1);
+    desc.rootParams[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
+    desc.rootParams[0].Descriptor.RegisterSpace = 0;
+    desc.rootParams[0].Descriptor.ShaderRegister = 0;
+
+    desc.desc.NumParameters = 1;
+    desc.desc.pParameters = desc.rootParams.data();
+    desc.desc.Flags = D3D12_ROOT_SIGNATURE_FLAG_LOCAL_ROOT_SIGNATURE;
+
+    return desc;
+}
+
+// 9.3 create constant buffer
+void Tutorial01::createConstantBuffer()
+{
+    // The shader declares the CB with 9 float3. However, due to HLSL packing rules, we create the CB with 9 float4 (each float3 needs to start on a 16-byte boundary)
+    vec4 bufferData[] =
+    {
+        // A
+        vec4(1.0f, 0.0f, 0.0f, 1.0f),
+        vec4(0.0f, 1.0f, 0.0f, 1.0f),
+        vec4(0.0f, 0.0f, 1.0f, 1.0f),
+
+        // B
+        vec4(1.0f, 1.0f, 0.0f, 1.0f),
+        vec4(0.0f, 1.0f, 1.0f, 1.0f),
+        vec4(1.0f, 0.0f, 1.0f, 1.0f),
+
+        // C
+        vec4(1.0f, 0.0f, 1.0f, 1.0f),
+        vec4(1.0f, 1.0f, 0.0f, 1.0f),
+        vec4(0.0f, 1.0f, 1.0f, 1.0f),
+    };
+
+    mpConstantBuffer = createBuffer(mpDevice, sizeof(bufferData), D3D12_RESOURCE_FLAG_NONE, D3D12_RESOURCE_STATE_GENERIC_READ, kUploadHeapProps);
+    uint8_t* pData;
+    d3d_call(mpConstantBuffer->Map(0, nullptr, (void**)&pData));
+    memcpy(pData, bufferData, sizeof(bufferData));
+    mpConstantBuffer->Unmap(0, nullptr);
+}
+
 // 4.6 Creating the RT Pipeline State Object
 void Tutorial01::createRtPipelineState()
 {
@@ -698,13 +743,14 @@ void Tutorial01::createRtPipelineState()
     //  1 for the DXIL library
     //  1 for hit-group
     //  2 for RayGen root-signature (root-signature and the subobject association)
-    //  2 for the root-signature shared between miss and hit shaders (signature and association)
+    //  9.2.a 2 for hit-program root-signature (root-signature and the subobject association)
+    //  9.2.b 2 for miss-shader root-signature (signature and association)
     //  2 for shader config (shared between all programs. 1 for the config, 1 for association)
     //  1 for pipeline config
     //  1 for the global root signature
 
-    // 4.6.a
-    std::array<D3D12_STATE_SUBOBJECT, 10> subobjects;
+    // 9.2.f
+    std::array<D3D12_STATE_SUBOBJECT, 12> subobjects;
     uint32_t index = 0;
 
     // 4.6.k Create the DXIL library
@@ -723,17 +769,23 @@ void Tutorial01::createRtPipelineState()
     ExportAssociation rgsRootAssociation(&kRayGenShader, 1, &(subobjects[rgsRootIndex]));
     subobjects[index++] = rgsRootAssociation.subobject; // 3 Associate Root Sig to RGS
 
-    // 4.8.b Create the miss- and hit-programs root-signature and association
+    // 9.2.d Create the hit root-signature and association
+    LocalRootSignature hitRootSignature(mpDevice, createHitRootDesc().desc);
+    subobjects[index] = hitRootSignature.subobject; // 4 Hit Root Sig
+
+    uint32_t hitRootIndex = index++; // 4
+    ExportAssociation hitRootAssociation(&kClosestHitShader, 1, &(subobjects[hitRootIndex]));
+    subobjects[index++] = hitRootAssociation.subobject; // 5 Associate Hit Root Sig to Hit Group
+
+    // 9.2.e Create the miss root-signature and association
     D3D12_ROOT_SIGNATURE_DESC emptyDesc = {};
     emptyDesc.Flags = D3D12_ROOT_SIGNATURE_FLAG_LOCAL_ROOT_SIGNATURE;
-    LocalRootSignature hitMissRootSignature(mpDevice, emptyDesc);
-    subobjects[index] = hitMissRootSignature.subobject; // 4 Root Sig to be shared between Miss and CHS
+    LocalRootSignature missRootSignature(mpDevice, emptyDesc);
+    subobjects[index] = missRootSignature.subobject; // 6 Miss Root Sig
 
-    // 4.8.c
-    uint32_t hitMissRootIndex = index++; // 4
-    const WCHAR* missHitExportName[] = { kMissShader, kClosestHitShader };
-    ExportAssociation missHitRootAssociation(missHitExportName, arraysize(missHitExportName), &(subobjects[hitMissRootIndex]));
-    subobjects[index++] = missHitRootAssociation.subobject; // 5 Associate Root Sig to Miss and CHS
+    uint32_t missRootIndex = index++; // 6
+    ExportAssociation missRootAssociation(&kMissShader, 1, &(subobjects[missRootIndex]));
+    subobjects[index++] = missRootAssociation.subobject; // 7 Associate Miss Root Sig to Miss Shader
 
     // 4.9.a Bind the payload size to the programs
     ShaderConfig shaderConfig(sizeof(float) * 2, sizeof(float) * 3); // 7.1 Payload
@@ -804,9 +856,13 @@ void Tutorial01::createShaderTable()
     // Entry 1 - miss program
     memcpy(pData + mShaderTableEntrySize, pRtsoProps->GetShaderIdentifier(kMissShader), D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES);
 
-    // Entry 2 - hit program
+    // 9.5 The Shader Table
+    // Entry 2 - hit program. Program ID and one constant-buffer as root descriptor    
     uint8_t* pHitEntry = pData + mShaderTableEntrySize * 2; // +2 skips the ray-gen and miss entries
     memcpy(pHitEntry, pRtsoProps->GetShaderIdentifier(kHitGroup), D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES);
+    uint8_t* pCbDesc = pHitEntry + D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES;  // Adding `progIdSize` gets us to the location of the constant-buffer entry
+    assert(((uint64_t)pCbDesc % 8) == 0); // Root descriptor must be stored at an 8-byte aligned address
+    *(D3D12_GPU_VIRTUAL_ADDRESS*)pCbDesc = mpConstantBuffer->GetGPUVirtualAddress();
 
     // Unmap
     mpShaderTable->Unmap(0, nullptr);
@@ -856,6 +912,7 @@ void Tutorial01::onLoad(HWND winHandle, uint32_t winWidth, uint32_t winHeight)
     createAccelerationStructures(); // Tutorial 03
     createRtPipelineState(); // Tutorial 04
     createShaderResources(); // Tutorial 06. Need to do this before initializing the shader-table
+    createConstantBuffer(); // Tutorial 09. Yes, we need to do it before creating the shader-table
     createShaderTable(); // Tutorial 05
 }
 
