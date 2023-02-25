@@ -205,23 +205,23 @@ void Tutorial01::createShaderTable()
 ```
 
 Four final changes:
-    - We need to change the InstanceContributionToHitGroupIndex for the second and third
+    * We need to change the InstanceContributionToHitGroupIndex for the second and third
     instances. This happens during TLAS creation.
     ```c++
     // 12.3.b
     pInstanceDesc[i].InstanceContributionToHitGroupIndex = i + 1;  // The plane takes an additional entry in the shader-table, hence the +1
     ```
-    - Hit the ray-generation shader (12-Shaders.hlsl), we need to change the TraceRay() call. We
+    * Hit the ray-generation shader (12-Shaders.hlsl), we need to change the TraceRay() call. We
     need to pass `1` as the MultiplierForGeometryContributionToShaderIndex argument.
     ```c++
     TraceRay(gRtScene, 0 /*rayFlags*/, 0xFF, 0 /* ray index*/, 1 /* 12.3.c MultiplierForGeometryContributionToShaderIndex */, 0, ray, payload);
     ```
-    - In onFrameRender(), set raytraceDesc.HitGroupTable.SizeInBytes to mShaderTableEntrySize * 4.
+    * In onFrameRender(), set raytraceDesc.HitGroupTable.SizeInBytes to mShaderTableEntrySize * 4.
     ```c++
     // 12.3.d
     raytraceDesc.HitGroupTable.SizeInBytes = mShaderTableEntrySize * 4;
     ```
-    - update createDxilLibrary()
+    * update createDxilLibrary()
     ```c++
     const WCHAR* entryPoints[] = { kRayGenShader, kMissShader, kPlaneChs /* 12.3.e */, kClosestHitShader};
     ```
