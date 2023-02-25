@@ -8,177 +8,142 @@ Requirements:
 - [Windows 10 SDK version 1809 (10.0.17763.0)](https://developer.microsoft.com/en-us/windows/downloads/sdk-archive)
 - Visual Studio 2022
 
-# DXR Tutorial 11
+# DXR Tutorial 12
 
-## 11.0 Adding a Second Geometry
+## 12.0 Per-Geometry Hit-Shader
 
 ## Overview
-So far, we used a single mesh, which had a single triangle it. We used instancing to render 3 triangles to
-the screen. However, in real-world scenarios scenes are comprised of thousands of meshes. In this
-tutorial we learn how to support multiple geometries by way of adding a plane to our scene.
+In the previous tutorial we added a new geometry – a plane. The result wasn’t that impressive – the
+plane used the same hit-shader and the same vertex colors as for the triangle, resulting in colorful
+image.
 
-## Acceleration Structures Revisited
-Time to talk a little bit about the acceleration structure hierarchy. During the previous tutorials we
-mentioned the top-level and bottom-level acceleration structures a lot. We also mentioned briefly that
-there’s something called geometry. Let’s fully understand what each means conceptually. We will only
-discuss triangles. We will not cover axis-aligned bounding-box geometries, but know that they exist.
+In this tutorial, we will implement a new hit-shader specific to the plane and show how to invoke it
+when the plane is hit by a ray.
 
-## Geometry
-A geometry describes a single mesh. It must have exactly 1 vertex buffer which contains the positions (it
-can also contain other vertex-attributes). An index-buffer is optional. The only supported topology is
-triangle-list. We can optionally provide a transformation matrix which will be applied to the positions at
-build time.
-
-A geometry is described using the D3D12_RAYTRACING_GEOMETRY_DESC struct.
-
-## Bottom-Level Acceleration Structure
-A BLAS is a collection of geometries. If a geometry describes a mesh, we can think of the BLAS as a
-model (made up of multiple meshes). The BLAS defines a local-space for the geometries it contains.
-
-## Top-Level Acceleration Structure
-If a geometry describes a mesh and a BLAS defines a model, then the TLAS is a scene. It is a collection of
-BLAS instances. Each instance is described by a BLAS and a transformation matrix.
-
-## Our Goal
-At the end of this tutorial we will use all the concept above. We will have 2 bottom-level acceleration
-structures:
-  1. Single geometry, containing our trusty triangle.
-  2. 2 geometries – a triangle and a plane.
-We will only make changes to the acceleration structure code. We do not need to change the shader-
-table.
-
-## 11.1 Creating the Plane
-First increase the vertex buffer and BLAS to 2 in 01-CreateWindow.h
+## 12.1 Plane Hit-Program
+For the plane, we will create a simple hit-program which returns a constant color. The following code
+can be found in ’12-Shaders.hlsl’
 ```c++
-// 11.1.a
-ID3D12ResourcePtr mpVertexBuffer[2];
-```
-```c++
-// 11.1.b
-ID3D12ResourcePtr mpBottomLevelAS[2];
-```
-
-We need to create a vertex buffer for the plane. This is standard DX12 code – see createPlaneVB().
-```c++
-// 11.1.c
-ID3D12ResourcePtr createPlaneVB(ID3D12Device5Ptr pDevice)
+// 12.1.a
+[shader("closesthit")]
+void planeChs(inout RayPayload payload, in BuiltInTriangleIntersectionAttributes attribs)
 {
-    const vec3 vertices[] =
-    {
-        vec3(-100, -1,  -2),
-        vec3(100, -1,  100),
-        vec3(-100, -1,  100),
-
-        vec3(-100, -1,  -2),
-        vec3(100, -1,  -2),
-        vec3(100, -1,  100),
-    };
-
-    // For simplicity, we create the vertex buffer on the upload heap, but that's not required
-    ID3D12ResourcePtr pBuffer = createBuffer(pDevice, sizeof(vertices), D3D12_RESOURCE_FLAG_NONE, D3D12_RESOURCE_STATE_GENERIC_READ, kUploadHeapProps);
-    uint8_t* pData;
-    pBuffer->Map(0, nullptr, (void**)&pData);
-    memcpy(pData, vertices, sizeof(vertices));
-    pBuffer->Unmap(0, nullptr);
-    return pBuffer;
+    payload.color = 0.9f;
 }
 ```
 
-We will revist the createAccelerationStructures() and update the buffer and BLAS later in this tutorial but go ahead and update the createTriangleVB
+We need to make the following changes to createRtPipelineState():
+  * 13 subojbects
+  ```c++
+  // 12.1.b
+  std::array<D3D12_STATE_SUBOBJECT, 13> subobjects;
+  ```
+  * Create a new HitProgram for the plane CHS (line 752).
+  ```c++
+  // 12.1.c  Create the plane HitProgram
+  HitProgram planeHitProgram(nullptr, kPlaneChs, kPlaneHitGroup);
+  subobjects[index++] = planeHitProgram.subObject; // 2 Plane Hit Group
+  ```
+  * Associate the empty-root signature with the new plane hit-group (line 779)
+  ```c++
+  // 12.1.d
+  uint32_t emptyRootIndex = index++; // 7
+  const WCHAR* emptyRootExport[] = { kPlaneChs, kMissShader };
+  ExportAssociation emptyRootAssociation(emptyRootExport, arraysize(emptyRootExport), &(subobjects[emptyRootIndex]));
+  subobjects[index++] = emptyRootAssociation.subobject; // 8 Associate Miss Root Sig to Miss Shader
+  ```
+  * Associate the shader-config sub-object with the plane hit-group (line 787)
+  ```c++
+  const WCHAR* shaderExports[] = { kMissShader, kClosestHitShader, kPlaneChs /*12.1.e*/, kRayGenShader};
+  ```
+Create the string representations (line 582~)
 ```c++
-// 11.1.d
-mpVertexBuffer[0] = createTriangleVB(mpDevice);
+// 12.1.f
+static const WCHAR* kPlaneChs = L"planeChs";
+static const WCHAR* kPlaneHitGroup = L"PlaneHitGroup";
 ```
 
-## 11.2 Bottom-Level Acceleration Structures
-We need 2 bottom-level acceleration structures. The code for both is very similar, so we will be using
-the same function.
-```c++
-//11.2.a bottom-level acceleration structure
-AccelerationStructureBuffers createBottomLevelAS(ID3D12Device5Ptr pDevice, ID3D12GraphicsCommandList4Ptr pCmdList, ID3D12ResourcePtr pVB[], const uint32_t vertexCount[], uint32_t geometryCount)
-```
+## 12.2 Shader-Table Layout
+We would like the ray-tracing pipeline to invoke the new hit-program when the plane is hit. In tutorial
+10 we learned that the hit-program indexing is computed as follows:
 
-The function now accepts an array of vertex buffers. We call it once with both the plane and the
-triangle, and once just with the triangle (the calls are in createAccelerationStructures()).
+  (HitStartAddress +
+  InstanceContributionToHitGroupIndex +
+  GeometryIndex * MultiplierForGeometryContributionToShaderIndex +
+  RayContributionToHitGroupIndex)
 
-The first thing we do is initialize an array of D3D12_RAYTRACING_GEOMETRY_DESC.
-```c++
-// 11.2.b
-std::vector<D3D12_RAYTRACING_GEOMETRY_DESC> geomDesc;
-geomDesc.resize(geometryCount);
+To understand how it can be used to invoke a different hit-program, let’s look again at our TLAS.
 
-for (uint32_t i = 0; i < geometryCount; i++)
-{
-    geomDesc[i].Type = D3D12_RAYTRACING_GEOMETRY_TYPE_TRIANGLES;
-    geomDesc[i].Triangles.VertexBuffer.StartAddress = pVB[i]->GetGPUVirtualAddress();
-    geomDesc[i].Triangles.VertexBuffer.StrideInBytes = sizeof(vec3);
-    geomDesc[i].Triangles.VertexCount = vertexCount[i];
-    geomDesc[i].Triangles.VertexFormat = DXGI_FORMAT_R32G32B32_FLOAT;
-    geomDesc[i].Flags = D3D12_RAYTRACING_GEOMETRY_FLAG_OPAQUE;
-}
-```
-```c++
-// 11.2.c
-inputs.NumDescs = geometryCount;
-inputs.pGeometryDescs = geomDesc.data();
-```
-Update the createAccelerationStructures() to accept the new BLAS AccelerationStructureBuffers
-```c++
-// 11.2.d
-mpVertexBuffer[1] = createPlaneVB(mpDevice);
-AccelerationStructureBuffers bottomLevelBuffers[2];
+We have 3 instances:
 
-// The first bottom-level buffer is for the plane and the triangle
-const uint32_t vertexCount[] = { 3, 6 }; // Triangle has 3 vertices, plane has 6
-bottomLevelBuffers[0] = createBottomLevelAS(mpDevice, mpCmdList, mpVertexBuffer, vertexCount, 2);
-mpBottomLevelAS[0] = bottomLevelBuffers[0].pResult;
+  - Instance 0 with 2 geometries.
+    o Geometry 0 – triangle
+    o Geometry 1 – plane
+  - Instance 1 – single geometry, a triangle
+  - Instance 2 – single geometry, a triangle
+  
+Geometries in the same instance share the same InstanceContributionToHitGroupIndex. To direct
+different geometries to different shader-table records, we need to use GeometryIndex.
 
-// The second bottom-level buffer is for the triangle only
-bottomLevelBuffers[1] = createBottomLevelAS(mpDevice, mpCmdList, mpVertexBuffer, vertexCount, 1);
-mpBottomLevelAS[1] = bottomLevelBuffers[1].pResult;
-```
+Our new shader-table will look like this:
+![image](https://user-images.githubusercontent.com/17934438/221359382-c4667656-0e00-4986-ac49-3855373507ab.png)
 
-The rest of the code is similar to the code in the previous tutorials, except we use the array and
-geometryCount when querying for the prebuild info and when creating the BLAS.
+Let’s see how this layout works with the hit-program index computation:
+- BaseIndex is 2. It’s shared between all instances and geometries.
+- InstanceContributionToHitGroupIndex is per instance, specified when building the TLAS.
+o For instance 0 it will be 0.
+o For instance 1 it will be 2 (we need to skip both geometries in instance 0).
+o For instance 2 it will be 3.
+- GeometryIndex is generated automatically by the pipeline. This is the index of the geometry
+within an instance.
+o This value will be 0 for all the triangles, since they are the first geometry in the instance.
+o It will be 1 for the plane, since it’s the second geometry in the first instance.
+- MultiplierForGeometryContributionToShaderIndex should be 1.
+o This value doesn’t affect the triangles (their GeometryIndex is 0).
+o For the plane, (GeometryIndex *
+MultiplierForGeometryContributionToShaderIndex) will result in 1, which is the
+required offset of the record relative to the start of the instance.
 
-## 11.3 Top-Level Acceleration Structure
-Nothing fancy in the code here.
+- RayContributionToHitGroupIndex should be 0.
+You can plug these values into the formula above to see the final value for each geometry.
 
-Update the Definition 
-```c++
-ID3D12ResourcePtr pBottomLevelAS[2] /* 11.3.a */
-```
-```c++
-// 11.3.b Create the desc for the triangle/plane instance
-pInstanceDesc[0].InstanceID = 0;
-pInstanceDesc[0].InstanceContributionToHitGroupIndex = 0;
-pInstanceDesc[0].Flags = D3D12_RAYTRACING_INSTANCE_FLAG_NONE;
-memcpy(pInstanceDesc[0].Transform, &transformation[0], sizeof(pInstanceDesc[0].Transform));
-pInstanceDesc[0].AccelerationStructure = pBottomLevelAS[0]->GetGPUVirtualAddress();
-pInstanceDesc[0].InstanceMask = 0xFF;
-```
+Shader-Table Changes
+Now that we understand the new layout and the indexing, we can make the required code changes.
+First, we need to create a larger shader-table. We need 6 entries in total. This happens at the beginning
+of createShaderTable().
+Next, we need to initialize the shader-table hit-program records. The first entry is for the triangle in
+instance 0:
 
-Important to note, we are not increasing the instances size, we are just making the plane and the first triangle use the same instance [0].
-```c++
-for (uint32_t i = 1 /*11.3.c*/; i < 3; i++)
-```
+RayGen Miss Hit
+Instance 0
+Geom 0
+Hit
+Instance 0
+Geom 1
+Hit
+Instance 1
+Geom 0
+Hit
+Instance 2
+Geom 0
 
-We are still initializing 3 D3D12_RAYTRACING_INSTANCE_DESC structures. The difference is the we initialize
-the first D3D12_RAYTRACING_INSTANCE_DESC instance with the bottom-level acceleration structure
-containing both geometries.
+// Entry 2 - Triangle 0 hit program. ProgramID and constant-buffer data
+uint8_t* pEntry2 = pData + mShaderTableEntrySize * 2;
+memcpy(pEntry2, pRtsoProps-&gt;GetShaderIdentifier(kTriHitGroup), progIdSize);
+*(D3D12_GPU_VIRTUAL_ADDRESS*)(pEntry2 + progIdSize) = mpConstantBuffer[0]-&gt;GetGPUVirtualAddress();
 
-The code for the other instance descs remains the same and will not be repeated here.
+This code is similar to the code from the previous tutorials.
+Now let’s initialize the entry for the plane. We have no shader resources, so we only need to set the
+program identifier of the plane hit-program.
 
-Finally update the createAccelerationStructures() to accept all the changes we made to BLAS
-```c++
-// 11.3.d
-AccelerationStructureBuffers topLevelBuffers = createTopLevelAS(mpDevice, mpCmdList, mpBottomLevelAS, mTlasSize);
-```
+Entries 4 and 5 are for the 2 other triangles. The code is very similar to the code we used for the first
+triangle. You can find the code at lines 861-871.
+Three final changes:
+- We need to change the InstanceContributionToHitGroupIndex for the second and third
+instances. This happens during TLAS creation, on line 410.
+- Hit the ray-generation shader (12-Shaders.hlsl), we need to change the TraceRay() call. We
+need to pass `1` as the MultiplierForGeometryContributionToShaderIndex argument.
+- In onFrameRender(), set raytraceDesc.HitGroupTable.SizeInBytes to mShaderTableEntrySize
+* 4.
 
-Launching the application, we can see the result.
-![image](https://user-images.githubusercontent.com/17934438/221356591-d619a603-33b4-4fd1-8322-606751104621.png)
-
-As you can see, the plane uses the same hit-shader and vertex-colors as the first triangle. That’s because
-they share the same shader-table record. In the next tutorial we will learn how to use a different shader-
-table record for each geometry, which will allow us to use different resources and even execute a
-different shader for each geometry.
+And that should do it!
