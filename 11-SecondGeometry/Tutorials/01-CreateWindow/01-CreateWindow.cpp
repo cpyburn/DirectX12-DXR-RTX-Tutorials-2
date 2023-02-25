@@ -290,23 +290,31 @@ struct AccelerationStructureBuffers
     ID3D12ResourcePtr pResult;
     ID3D12ResourcePtr pInstanceDesc;    // Used only for top-level AS
 };
-//3.4.c bottom-level acceleration structure
-AccelerationStructureBuffers createBottomLevelAS(ID3D12Device5Ptr pDevice, ID3D12GraphicsCommandList4Ptr pCmdList, ID3D12ResourcePtr pVB)
+
+//11.2.a bottom-level acceleration structure
+AccelerationStructureBuffers createBottomLevelAS(ID3D12Device5Ptr pDevice, ID3D12GraphicsCommandList4Ptr pCmdList, ID3D12ResourcePtr pVB[], const uint32_t vertexCount[], uint32_t geometryCount)
 {
-    D3D12_RAYTRACING_GEOMETRY_DESC geomDesc = {};
-    geomDesc.Type = D3D12_RAYTRACING_GEOMETRY_TYPE_TRIANGLES;
-    geomDesc.Triangles.VertexBuffer.StartAddress = pVB->GetGPUVirtualAddress();
-    geomDesc.Triangles.VertexBuffer.StrideInBytes = sizeof(vec3);
-    geomDesc.Triangles.VertexFormat = DXGI_FORMAT_R32G32B32_FLOAT;
-    geomDesc.Triangles.VertexCount = 3;
-    geomDesc.Flags = D3D12_RAYTRACING_GEOMETRY_FLAG_OPAQUE;
+    // 11.2.b
+    std::vector<D3D12_RAYTRACING_GEOMETRY_DESC> geomDesc;
+    geomDesc.resize(geometryCount);
+
+    for (uint32_t i = 0; i < geometryCount; i++)
+    {
+        geomDesc[i].Type = D3D12_RAYTRACING_GEOMETRY_TYPE_TRIANGLES;
+        geomDesc[i].Triangles.VertexBuffer.StartAddress = pVB[i]->GetGPUVirtualAddress();
+        geomDesc[i].Triangles.VertexBuffer.StrideInBytes = sizeof(vec3);
+        geomDesc[i].Triangles.VertexCount = vertexCount[i];
+        geomDesc[i].Triangles.VertexFormat = DXGI_FORMAT_R32G32B32_FLOAT;
+        geomDesc[i].Flags = D3D12_RAYTRACING_GEOMETRY_FLAG_OPAQUE;
+    }
 
     // Get the size requirements for the scratch and AS buffers
     D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS inputs = {};
     inputs.DescsLayout = D3D12_ELEMENTS_LAYOUT_ARRAY;
     inputs.Flags = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_NONE;
-    inputs.NumDescs = 1;
-    inputs.pGeometryDescs = &geomDesc;
+    // 11.2.c
+    inputs.NumDescs = geometryCount;
+    inputs.pGeometryDescs = geomDesc.data();
     inputs.Type = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL;
 
     D3D12_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO info = {};
@@ -335,7 +343,7 @@ AccelerationStructureBuffers createBottomLevelAS(ID3D12Device5Ptr pDevice, ID3D1
 }
 
 // 3.5 Top-Level Acceleration Structure
-AccelerationStructureBuffers createTopLevelAS(ID3D12Device5Ptr pDevice, ID3D12GraphicsCommandList4Ptr pCmdList, ID3D12ResourcePtr pBottomLevelAS, uint64_t& tlasSize)
+AccelerationStructureBuffers createTopLevelAS(ID3D12Device5Ptr pDevice, ID3D12GraphicsCommandList4Ptr pCmdList, ID3D12ResourcePtr pBottomLevelAS[2] /* 11.3.a */, uint64_t& tlasSize)
 {
     // First, get the size of the TLAS buffers and create them
     D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS inputs = {};
@@ -372,8 +380,16 @@ AccelerationStructureBuffers createTopLevelAS(ID3D12Device5Ptr pDevice, ID3D12Gr
     transformation[1] = translate(mat4(), vec3(-2, 0, 0));
     transformation[2] = translate(mat4(), vec3(2, 0, 0));
 
+    // 11.3.b Create the desc for the triangle/plane instance
+    pInstanceDesc[0].InstanceID = 0;
+    pInstanceDesc[0].InstanceContributionToHitGroupIndex = 0;
+    pInstanceDesc[0].Flags = D3D12_RAYTRACING_INSTANCE_FLAG_NONE;
+    memcpy(pInstanceDesc[0].Transform, &transformation[0], sizeof(pInstanceDesc[0].Transform));
+    pInstanceDesc[0].AccelerationStructure = pBottomLevelAS[0]->GetGPUVirtualAddress();
+    pInstanceDesc[0].InstanceMask = 0xFF;
+
     // 8.0.d
-    for (uint32_t i = 0; i < 3; i++)
+    for (uint32_t i = 1 /*11.3.c*/; i < 3; i++)
     {
         pInstanceDesc[i].InstanceID = i; // This value will be exposed to the shader via InstanceID()
         // 10.3
@@ -381,7 +397,7 @@ AccelerationStructureBuffers createTopLevelAS(ID3D12Device5Ptr pDevice, ID3D12Gr
         pInstanceDesc[i].Flags = D3D12_RAYTRACING_INSTANCE_FLAG_NONE;
         mat4 m = transpose(transformation[i]); // GLM is column major, the INSTANCE_DESC is row major
         memcpy(pInstanceDesc[i].Transform, &m, sizeof(pInstanceDesc[i].Transform));
-        pInstanceDesc[i].AccelerationStructure = pBottomLevelAS->GetGPUVirtualAddress();
+        pInstanceDesc[i].AccelerationStructure = pBottomLevelAS[1]->GetGPUVirtualAddress();
         pInstanceDesc[i].InstanceMask = 0xFF;
     }
 
@@ -406,12 +422,49 @@ AccelerationStructureBuffers createTopLevelAS(ID3D12Device5Ptr pDevice, ID3D12Gr
     return buffers;
 }
 
+// 11.1.c
+ID3D12ResourcePtr createPlaneVB(ID3D12Device5Ptr pDevice)
+{
+    const vec3 vertices[] =
+    {
+        vec3(-100, -1,  -2),
+        vec3(100, -1,  100),
+        vec3(-100, -1,  100),
+
+        vec3(-100, -1,  -2),
+        vec3(100, -1,  -2),
+        vec3(100, -1,  100),
+    };
+
+    // For simplicity, we create the vertex buffer on the upload heap, but that's not required
+    ID3D12ResourcePtr pBuffer = createBuffer(pDevice, sizeof(vertices), D3D12_RESOURCE_FLAG_NONE, D3D12_RESOURCE_STATE_GENERIC_READ, kUploadHeapProps);
+    uint8_t* pData;
+    pBuffer->Map(0, nullptr, (void**)&pData);
+    memcpy(pData, vertices, sizeof(vertices));
+    pBuffer->Unmap(0, nullptr);
+    return pBuffer;
+}
+
 // 3.6 createAccelerationStructures()
 void Tutorial01::createAccelerationStructures()
 {
-    mpVertexBuffer = createTriangleVB(mpDevice);
-    AccelerationStructureBuffers bottomLevelBuffers = createBottomLevelAS(mpDevice, mpCmdList, mpVertexBuffer);
-    AccelerationStructureBuffers topLevelBuffers = createTopLevelAS(mpDevice, mpCmdList, bottomLevelBuffers.pResult, mTlasSize);
+    // 11.1.d
+    mpVertexBuffer[0] = createTriangleVB(mpDevice);
+    // 11.2.d
+    mpVertexBuffer[1] = createPlaneVB(mpDevice);
+    AccelerationStructureBuffers bottomLevelBuffers[2];
+
+    // The first bottom-level buffer is for the plane and the triangle
+    const uint32_t vertexCount[] = { 3, 6 }; // Triangle has 3 vertices, plane has 6
+    bottomLevelBuffers[0] = createBottomLevelAS(mpDevice, mpCmdList, mpVertexBuffer, vertexCount, 2);
+    mpBottomLevelAS[0] = bottomLevelBuffers[0].pResult;
+
+    // The second bottom-level buffer is for the triangle only
+    bottomLevelBuffers[1] = createBottomLevelAS(mpDevice, mpCmdList, mpVertexBuffer, vertexCount, 1);
+    mpBottomLevelAS[1] = bottomLevelBuffers[1].pResult;
+
+    // 11.3.d
+    AccelerationStructureBuffers topLevelBuffers = createTopLevelAS(mpDevice, mpCmdList, mpBottomLevelAS, mTlasSize);
 
     // The tutorial doesn't have any resource lifetime management, so we flush and sync here. This is not required by the DXR spec - you can submit the list whenever you like as long as you take care of the resources lifetime.
     mFenceValue = submitCommandList(mpCmdList, mpCmdQueue, mpFence, mFenceValue);
@@ -422,7 +475,6 @@ void Tutorial01::createAccelerationStructures()
 
     // Store the AS buffers. The rest of the buffers will be released once we exit the function
     mpTopLevelAS = topLevelBuffers.pResult;
-    mpBottomLevelAS = bottomLevelBuffers.pResult;
 }
 
 // 4.1 Shader-Libraries

@@ -68,11 +68,9 @@ private:
 
     // Tutorial 03
     void createAccelerationStructures();
-    // 11.1.a
-    ID3D12ResourcePtr mpVertexBuffer[2];
+    ID3D12ResourcePtr mpVertexBuffer;
     ID3D12ResourcePtr mpTopLevelAS;
-    // 11.1.b
-    ID3D12ResourcePtr mpBottomLevelAS[2];
+    ID3D12ResourcePtr mpBottomLevelAS;
     uint64_t mTlasSize = 0;
 
     // Tutorial 04
