@@ -77,8 +77,8 @@ To understand how it can be used to invoke a different hit-program, let’s look
 We have 3 instances:
 
   - Instance 0 with 2 geometries.
-    o Geometry 0 – triangle
-    o Geometry 1 – plane
+    * Geometry 0 – triangle
+    * Geometry 1 – plane
   - Instance 1 – single geometry, a triangle
   - Instance 2 – single geometry, a triangle
   
@@ -86,6 +86,7 @@ Geometries in the same instance share the same InstanceContributionToHitGroupInd
 different geometries to different shader-table records, we need to use GeometryIndex.
 
 Our new shader-table will look like this:
+
 ![image](https://user-images.githubusercontent.com/17934438/221359382-c4667656-0e00-4986-ac49-3855373507ab.png)
 
 Let’s see how this layout works with the hit-program index computation:
