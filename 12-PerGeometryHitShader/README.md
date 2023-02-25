@@ -205,6 +205,7 @@ void Tutorial01::createShaderTable()
 ```
 
 Four final changes:
+
     * We need to change the InstanceContributionToHitGroupIndex for the second and third
     instances. This happens during TLAS creation.
     ```c++
@@ -227,3 +228,6 @@ Four final changes:
     ```
 
 And that should do it!
+![image](https://user-images.githubusercontent.com/17934438/221361293-e01bac6d-20e2-4c53-bd01-a1fb6cdcb0cb.png)
+
+
