@@ -55,11 +55,11 @@ D3D12_RAYTRACING_GEOMETRY_FLAG_OPAQUE flag, which means the AHS will not be exec
 ## Ray-Tracing Pipeline State Object
 We need to make the following changes to createRtPipelineState():
 * In createDxilLibrary (), add the new entry points to the list.
-        ```c++
-        static const WCHAR* kShadowChs = L"shadowChs";
-        static const WCHAR* kShadowMiss = L"shadowMiss";
-        static const WCHAR* kShadowHitGroup = L"ShadowHitGroup";
-        ```
+```c++
+static const WCHAR* kShadowChs = L"shadowChs";
+static const WCHAR* kShadowMiss = L"shadowMiss";
+static const WCHAR* kShadowHitGroup = L"ShadowHitGroup";
+```
 * Create a new HitProgram for the shadowChs().
 * We are going to use the empty-root signature with the shadow miss and hit-program, so we add
 them to emptyRootAssociation.
