@@ -25,7 +25,27 @@ the same TLAS. If the ray hits a geometry, then the hit point is in shadow. Othe
 ## 13.1 The Shadow Ray
 A “ray” is a combination of a miss-program and a hit-program. For shadows, we only care if there was a
 hit or no. Both the closest-hit and miss shaders can be found in `13-Shaders.hlsl`
+```c++
+// 13.1.a
+struct ShadowPayload
+{
+    bool hit;
+};
 
+// 13.1.b
+[shader("closesthit")]
+void shadowChs(inout ShadowPayload payload, in BuiltInTriangleIntersectionAttributes attribs)
+{
+    payload.hit = true;
+}
+
+// 13.1.c
+[shader("miss")]
+void shadowMiss(inout ShadowPayload payload)
+{
+    payload.hit = false;
+}
+```
 The payload contains a single Boolean value.
 
 Theoretically, it’s more efficient to use an any-hit shader instead of closest-hit shader for shadow-rays.
@@ -35,6 +55,11 @@ D3D12_RAYTRACING_GEOMETRY_FLAG_OPAQUE flag, which means the AHS will not be exec
 ## Ray-Tracing Pipeline State Object
 We need to make the following changes to createRtPipelineState():
 * In createDxilLibrary (), add the new entry points to the list.
+  * ```c++
+  static const WCHAR* kShadowChs = L"shadowChs";
+  static const WCHAR* kShadowMiss = L"shadowMiss";
+  static const WCHAR* kShadowHitGroup = L"ShadowHitGroup";
+    ```
 * Create a new HitProgram for the shadowChs().
 * We are going to use the empty-root signature with the shadow miss and hit-program, so we add
 them to emptyRootAssociation.
@@ -110,7 +135,7 @@ we can treat this value as the ray-index.
 At this stage, you should be familiar enough with the code that we don’t need to go over it in much
 detail. Instead, we will point to the location of the changes.
 
-## 13-SecondaryRayType.cpp
+### 13-SecondaryRayType.cpp
 - Change the value of InstanceContributionToHitGroupIndex for each instance in
 createTopLevelAS()
 
@@ -118,12 +143,12 @@ createTopLevelAS()
 on the layout above.
 - When calling DispatchRays(), use the new miss and hit programs’ parameters and shader-table
 sizes.
-Ray-Gen Shader
+### Ray-Gen Shader
 - Pass “2” as the MultiplierForGeometryContributionToShaderIndex when calling
 rtTrace().
 - The RayContributionToHitGroupIndex and MissShaderIndex stay 0. In effect is the ray-
 index and we’d like to trace a primary ray.
-Plane CHS
+### Plane CHS
 We completely reimplemented planeChs(). Let’s go over the code.
 
 The function signature stayed the same. Next, we need to fetch the hit-point properties using the
@@ -139,16 +164,6 @@ We start by finding the world-space position of the intersection point. This val
 shadow-ray.
 
 We simulate a directional light, so we use a constant direction for the shadow-ray.
-void planeChs(inout RayPayload payload, in BuiltInTriangleIntersectionAttributes attribs)
-
-float3 posW = rayOriginW + hitT * rayDirW;
-RayDesc ray;
-ray.Origin = posW;
-
-ray.Direction = normalize(float3(0.5, 0.5, -0.5));
-float hitT = RayTCurrent();
-float3 rayDirW = WorldRayDirection();
-float3 rayOriginW = WorldRayOrigin();
 
 We then set the ray’s extents. Note that we do not use 0 for TMin but set it into a small value. This is to
 avoid aliasing issues due to floating-point errors.
@@ -157,9 +172,7 @@ Now we can trace the ray:
 
 Note that we set RayContributionToHitGroupIndex and MissShaderIndex to 1, which is the ray-
 index.
+
 The result of this TraceRay() call will be used to compute the intersection point’s color.
 
-Now that the coding
-is done, we can
-launch our
-application and see some shadows on the plane.
+Now that the coding is done, we can launch our application and see some shadows on the plane.
