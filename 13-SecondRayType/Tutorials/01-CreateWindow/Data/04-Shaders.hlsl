@@ -77,7 +77,7 @@ void rayGen()
     ray.TMax = 100000;
 
     RayPayload payload;
-    TraceRay(gRtScene, 0 /*rayFlags*/, 0xFF, 0 /* ray index*/, 1 /* 12.3.c MultiplierForGeometryContributionToShaderIndex */, 0, ray, payload);
+    TraceRay(gRtScene, 0 /*rayFlags*/, 0xFF, 0 /* ray index*/, 2 /* 13.4 MultiplierForGeometryContributionToShaderIndex */, 0, ray, payload);
     float3 col = linearToSrgb(payload.color);
     gOutput[launchIndex.xy] = float4(col, 1);
 }
@@ -97,10 +97,51 @@ void chs(inout RayPayload payload, in BuiltInTriangleIntersectionAttributes attr
     payload.color = A * barycentrics.x + B * barycentrics.y + C * barycentrics.z;
 }
 
+// 13.1.a
+struct ShadowPayload
+{
+    bool hit;
+};
+
 // 12.1.a
 [shader("closesthit")]
 void planeChs(inout RayPayload payload, in BuiltInTriangleIntersectionAttributes attribs)
 {
-    payload.color = 0.9f;
+    // 13.5.a
+    float hitT = RayTCurrent();
+    float3 rayDirW = WorldRayDirection();
+    float3 rayOriginW = WorldRayOrigin();
+
+    // 13.5.b Find the world-space hit position
+    float3 posW = rayOriginW + hitT * rayDirW;
+
+    // Fire a shadow ray. The direction is hard-coded here, but can be fetched from a constant-buffer
+    RayDesc ray;
+    ray.Origin = posW;
+    // 13.5.c
+    ray.Direction = normalize(float3(0.5, 0.5, -0.5));
+    // 13.5.d
+    ray.TMin = 0.01;
+    ray.TMax = 100000;
+    // 13.5.e
+    ShadowPayload shadowPayload;
+    TraceRay(gRtScene, 0  /*rayFlags*/, 0xFF, 1 /* ray index*/, 0, 1, ray, shadowPayload);
+    // 13.5.f
+    float factor = shadowPayload.hit ? 0.1 : 1.0;
+    payload.color = float4(0.9f, 0.9f, 0.9f, 1.0f) * factor;
+}
+
+// 13.1.b
+[shader("closesthit")]
+void shadowChs(inout ShadowPayload payload, in BuiltInTriangleIntersectionAttributes attribs)
+{
+    payload.hit = true;
+}
+
+// 13.1.c
+[shader("miss")]
+void shadowMiss(inout ShadowPayload payload)
+{
+    payload.hit = false;
 }
 
