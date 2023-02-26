@@ -165,13 +165,25 @@ Update the mpTopLevelAS in the .h file to a object type of AccelerationStructure
 // 14.3.c
 AccelerationStructureBuffers mpTopLevelAS;
 ```
-Finally update the createShaderResources()
+Update the createShaderResources()
 ```c++
 // 14.3.d
 srvDesc.RaytracingAccelerationStructure.Location = mpTopLevelAS.pResult->GetGPUVirtualAddress();
 ```
+Now we have to kind of hack the syncing process in endFrame() because the the TLAS resources are not double buffered.  We could fix this by making mpTopLevelAS[same size as back buffer aka 2] in the .h and using mpTopLevelAS[mpSwapChain->GetCurrentBackBufferIndex()] to access the correct tlas in the .cpp file but since that is out of scope for this tutorial we will use the hack below.
+```c++
+// 14.3.d Sync. We need to do this because the TLAS resources are not double-buffered and we are going to update them
+// Make sure we have the new back-buffer is ready
+//if (mFenceValue > kDefaultSwapChainBuffers)
+{
+    //mpFence->SetEventOnCompletion(mFenceValue - kDefaultSwapChainBuffers + 1, mFenceEvent);
+    mpFence->SetEventOnCompletion(mFenceValue, mFenceEvent);
+    WaitForSingleObject(mFenceEvent, INFINITE);
+}
+```
 
 And we’re done. No shader changes are required. Launch the application and you should see the 2 outer
 triangles rotate.
+![image](https://user-images.githubusercontent.com/17934438/221430337-44e95f40-e64a-4300-9306-f24221888543.png)
 
 
