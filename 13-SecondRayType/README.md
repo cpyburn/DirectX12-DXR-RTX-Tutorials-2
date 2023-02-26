@@ -27,137 +27,90 @@ A “ray” is a combination of a miss-program and a hit-program. For shadows, w
 hit or no. Both the closest-hit and miss shaders can be found in `13-Shaders.hlsl`
 
 The payload contains a single Boolean value.
+
 Theoretically, it’s more efficient to use an any-hit shader instead of closest-hit shader for shadow-rays.
 In our case it will not work, since we create the acceleration structures with
 D3D12_RAYTRACING_GEOMETRY_FLAG_OPAQUE flag, which means the AHS will not be executed.
-struct ShadowPayload
-{
-bool hit;
-};
-[shader(&quot;closesthit&quot;)]
-void shadowChs(inout ShadowPayload payload, in BuiltInTriangleIntersectionAttributes attribs)
-{
-payload.hit = true;
-}
-[shader(&quot;miss&quot;)]
-void miss(inout ShadowPayload payload)
-{
-payload.hit = false;
-}
 
-Ray-Tracing Pipeline State Object
+## Ray-Tracing Pipeline State Object
 We need to make the following changes to createRtPipelineState():
-- In createDxilLibrary (), add the new entry points to the list.
-- Create a new HitProgram for the shadowChs().
-- We are going to use the empty-root signature with the shadow miss and hit-program, so we add
+* In createDxilLibrary (), add the new entry points to the list.
+* Create a new HitProgram for the shadowChs().
+* We are going to use the empty-root signature with the shadow miss and hit-program, so we add
 them to emptyRootAssociation.
-- Include the shadow shaders in the ExportAssociation to the ShaderConfig sub-object. Even
+* Include the shadow shaders in the ExportAssociation to the ShaderConfig sub-object. Even
 though the Shadow payload is a different size, there can only be one defined max size per State
 Object. It is valid to associate your shaders to multiple ShaderConfig sub-objects if their values
 are the same, but we will only use one here for simplicity.
-- Change the maxTraceRecursionDepth in the PipelineConfig object to 2. We’re going to call
+* Change the maxTraceRecursionDepth in the PipelineConfig object to 2. We’re going to call
 TraceRay() once from the ray-gen shader and once from the plane-CHS.
-- Create and associate a root-signature with the plane-CHS. This happens in
+* Create and associate a root-signature with the plane-CHS. This happens in
 createPlaneHitRootDesc(). This root-signature contains a single SRV which will be used to bind
 the TLAS to the shader.
 
-Shader-Table Layout
+## Shader-Table Layout
 By now it should be clear that the shader-table layout and indexing controls which shaders will be
 invoked when a ray hit a geometry or missed everything in the scene.
 For reference, here is the hit-program indexing computation:
 
+entryIndex =
+  InstanceContributionToHitGroupIndex +
+  GeometryIndex * MultiplierForGeometryContributionToShaderIndex +
+  RayContributionToHitGroupIndex)
+
 And this is for the miss-program it’s missShaderIndex passed to TraceRay().
+
 Let’s look at the new shader-table layout, and we’ll follow up with explanation on the indexing.
 
+![image](https://user-images.githubusercontent.com/17934438/221415166-6b60829f-1d7f-46b4-bac1-ec364a266e38.png)
+
 We have 11 entries:
-Entry 0 - Ray-gen program
-Entry 1 - Miss program for the primary ray
-Entry 2 - Miss program for the shadow ray
-Entries 3,4 - Hit programs for triangle 0 (primary followed by shadow)
-Entries 5,6 - Hit programs for the plane (primary followed by shadow)
-Entries 7,8 - Hit programs for triangle 1 (primary followed by shadow)
-Entries 9,10 - Hit programs for triangle 2 (primary followed by shadow)
-entryIndex =
-InstanceContributionToHitGroupIndex +
-GeometryIndex * MultiplierForGeometryContributionToShaderIndex +
-RayContributionToHitGroupIndex)
-
-RayGen Miss
-Primary
-Ray
-
-Hit
-Primary
-Instance 0
-Geom 0
-Miss
-Shadow
-Ray
-
-Hit
-Shadow
-Instance 0
-Geom 0
-Hit
-Primary
-Instance 0
-Geom 1
-Hit
-Shadow
-Instance 0
-Geom 1
-Hit
-Primary
-Instance 1
-Geom 0
-Hit
-Shadow
-Instance 1
-Geom 0
-Hit
-Primary
-Instance 2
-Geom 0
-Hit
-Shadow
-Instance 2
-Geom 0
+  * Entry 0 - Ray-gen program
+  * Entry 1 - Miss program for the primary ray
+  * Entry 2 - Miss program for the shadow ray
+  * Entries 3,4 - Hit programs for triangle 0 (primary followed by shadow)
+  * Entries 5,6 - Hit programs for the plane (primary followed by shadow)
+  * Entries 7,8 - Hit programs for triangle 1 (primary followed by shadow)
+  * Entries 9,10 - Hit programs for triangle 2 (primary followed by shadow)
 
 This is a common layout when multiple rays are required. In our case the records are tightly packed and
 use a single buffer, but that’s not mandatory. The layout follows these 2 conventions:
-- Records for each geometry are consecutive.
-- The shadow-ray record always follows its matching primary-ray record.
-Shader-Table Indexing
+* Records for each geometry are consecutive.
+* The shadow-ray record always follows its matching primary-ray record.
+
+## Shader-Table Indexing
 As a reminder, here is a summary of the different values used to calculate an shader-table address:
-- D3D12_DISPATCH_RAYS_DESC contains StartAddress and StrideInBytes fields per shader
+  * D3D12_DISPATCH_RAYS_DESC contains StartAddress and StrideInBytes fields per shader
 type.
-- RayContributionToHitGroupIndex – One of the parameters of the HLSL’s TraceRay()
+  * RayContributionToHitGroupIndex – One of the parameters of the HLSL’s TraceRay()
 function. The maximum allowed value is 15.
-- MultiplierForGeometryContributionToShaderIndex – One of the parameters of the HLSL’s
+  * MultiplierForGeometryContributionToShaderIndex – One of the parameters of the HLSL’s
 TraceRay() function. The maximum allowed value is 15.
-- MissShaderIndex – One of the parameters of the HLSL’s TraceRay () function.
-- InstanceContributionToHitGroupIndex – This value is specified when creating the TLAS, as
+  * MissShaderIndex – One of the parameters of the HLSL’s TraceRay () function.
+  * InstanceContributionToHitGroupIndex – This value is specified when creating the TLAS, as
 part of D3D12_RAYTRACING_INSTANCE_DESC.
+
 We will set these values as follows:
-- MissStartAddress - the address of the second shader-table entry
-- HitBaseIndex - the address of the third shader-table entry
-- RayContributionToHitGroupIndex – The ray-index. 0 For the primary-ray, 1 for the shadow-
+  * MissStartAddress - the address of the second shader-table entry
+  * HitBaseIndex - the address of the third shader-table entry
+  * RayContributionToHitGroupIndex – The ray-index. 0 For the primary-ray, 1 for the shadow-
 ray. The simplest way to understand this is to look at the hit-program index computation
 mentioned above.
-- MultiplierForGeometryContributionToShaderIndex – This only affects instances with
+  * MultiplierForGeometryContributionToShaderIndex – This only affects instances with
 multiple geometries. In our case, instance 0. This is the distance in records between geometries.
 In our case it’s the ray count (2).
-- MissShaderIndex – Since our miss-shaders entries are stored contiguously in the shader-table,
+  * MissShaderIndex – Since our miss-shaders entries are stored contiguously in the shader-table,
 we can treat this value as the ray-index.
-- InstanceContributionToHitGroupIndex
-o 0 for instance 0
-o 4 for instance 1
-o 6 for instance 2
+  * InstanceContributionToHitGroupIndex
+    * 0 for instance 0
+    * 4 for instance 1
+    * 6 for instance 2
 
-Code Changes
+## Code Changes
 At this stage, you should be familiar enough with the code that we don’t need to go over it in much
 detail. Instead, we will point to the location of the changes.
-13-SecondaryRayType.cpp
+
+## 13-SecondaryRayType.cpp
 - Change the value of InstanceContributionToHitGroupIndex for each instance in
 createTopLevelAS()
 
