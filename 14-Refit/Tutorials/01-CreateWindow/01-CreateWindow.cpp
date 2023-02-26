@@ -213,10 +213,12 @@ void Tutorial01::endFrame(uint32_t rtvIndex)
     // Prepare the command list for the next frame
     uint32_t bufferIndex = mpSwapChain->GetCurrentBackBufferIndex();
 
+    // 14.3.d Sync. We need to do this because the TLAS resources are not double-buffered and we are going to update them
     // Make sure we have the new back-buffer is ready
-    if (mFenceValue > kDefaultSwapChainBuffers)
+    //if (mFenceValue > kDefaultSwapChainBuffers)
     {
-        mpFence->SetEventOnCompletion(mFenceValue - kDefaultSwapChainBuffers + 1, mFenceEvent);
+        //mpFence->SetEventOnCompletion(mFenceValue - kDefaultSwapChainBuffers + 1, mFenceEvent);
+        mpFence->SetEventOnCompletion(mFenceValue, mFenceEvent);
         WaitForSingleObject(mFenceEvent, INFINITE);
     }
 
