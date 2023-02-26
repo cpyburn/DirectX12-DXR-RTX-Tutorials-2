@@ -28,3 +28,14 @@ Unlike Nvidia's tutorials, each tutorial builds upon the tutorial before it and 
 
 [9-Bonus:ConstantBuffer](https://github.com/cpyburn/DirectX-DXR-RTX-Tutorials-2/tree/main/9-BonusConstantBuffer)
 ![image](https://user-images.githubusercontent.com/17934438/221323878-d6feacc0-14b4-413c-b14e-abf0d648e708.png)
+
+[10-PerInstanceConstantBuffer](https://github.com/cpyburn/DirectX12-DXR-RTX-Tutorials-2/tree/main/10-PerInstanceConstantBuffer)
+![image](https://user-images.githubusercontent.com/17934438/221327968-8264e38d-67c6-4fe2-bc6b-bf63b00b13ae.png)
+
+[11-SecondGeometry](https://github.com/cpyburn/DirectX12-DXR-RTX-Tutorials-2/tree/main/11-SecondGeometry)
+![image](https://user-images.githubusercontent.com/17934438/221356591-d619a603-33b4-4fd1-8322-606751104621.png)
+
+[13-SecondRayType](https://github.com/cpyburn/DirectX12-DXR-RTX-Tutorials-2/tree/main/13-SecondRayType)
+![image](https://user-images.githubusercontent.com/17934438/221421442-3b6cccfc-29b4-4377-a311-0835d6cee355.png)
+
+[14-Refit]()
