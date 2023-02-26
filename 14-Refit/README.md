@@ -176,12 +176,14 @@ Now we have to kind of hack the syncing process in endFrame() because the the TL
 // Make sure we have the new back-buffer is ready
 //if (mFenceValue > kDefaultSwapChainBuffers)
 {
-    mpFence->SetEventOnCompletion(mFenceValue - kDefaultSwapChainBuffers + 1, mFenceEvent);
+    //mpFence->SetEventOnCompletion(mFenceValue - kDefaultSwapChainBuffers + 1, mFenceEvent);
+    mpFence->SetEventOnCompletion(mFenceValue, mFenceEvent);
     WaitForSingleObject(mFenceEvent, INFINITE);
 }
 ```
 
 And we’re done. No shader changes are required. Launch the application and you should see the 2 outer
 triangles rotate.
+![image](https://user-images.githubusercontent.com/17934438/221430337-44e95f40-e64a-4300-9306-f24221888543.png)
 
 
