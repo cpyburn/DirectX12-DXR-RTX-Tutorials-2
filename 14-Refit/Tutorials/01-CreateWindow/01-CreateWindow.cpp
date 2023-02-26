@@ -283,16 +283,9 @@ static const D3D12_HEAP_PROPERTIES kDefaultHeapProps =
     0,
     0
 };
-// 3.4.b bottom-level acceleration structure
-struct AccelerationStructureBuffers
-{
-    ID3D12ResourcePtr pScratch;
-    ID3D12ResourcePtr pResult;
-    ID3D12ResourcePtr pInstanceDesc;    // Used only for top-level AS
-};
 
 //11.2.a bottom-level acceleration structure
-AccelerationStructureBuffers createBottomLevelAS(ID3D12Device5Ptr pDevice, ID3D12GraphicsCommandList4Ptr pCmdList, ID3D12ResourcePtr pVB[], const uint32_t vertexCount[], uint32_t geometryCount)
+Tutorial01::AccelerationStructureBuffers createBottomLevelAS(ID3D12Device5Ptr pDevice, ID3D12GraphicsCommandList4Ptr pCmdList, ID3D12ResourcePtr pVB[], const uint32_t vertexCount[], uint32_t geometryCount)
 {
     // 11.2.b
     std::vector<D3D12_RAYTRACING_GEOMETRY_DESC> geomDesc;
@@ -321,7 +314,7 @@ AccelerationStructureBuffers createBottomLevelAS(ID3D12Device5Ptr pDevice, ID3D1
     pDevice->GetRaytracingAccelerationStructurePrebuildInfo(&inputs, &info);
 
     // Create the buffers. They need to support UAV, and since we are going to immediately use them, we create them with an unordered-access state
-    AccelerationStructureBuffers buffers;
+    Tutorial01::AccelerationStructureBuffers buffers;
     buffers.pScratch = createBuffer(pDevice, info.ScratchDataSizeInBytes, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, kDefaultHeapProps);
     buffers.pResult = createBuffer(pDevice, info.ResultDataMaxSizeInBytes, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_RAYTRACING_ACCELERATION_STRUCTURE, kDefaultHeapProps);
 
@@ -342,13 +335,14 @@ AccelerationStructureBuffers createBottomLevelAS(ID3D12Device5Ptr pDevice, ID3D1
     return buffers;
 }
 
-// 3.5 Top-Level Acceleration Structure
-AccelerationStructureBuffers createTopLevelAS(ID3D12Device5Ptr pDevice, ID3D12GraphicsCommandList4Ptr pCmdList, ID3D12ResourcePtr pBottomLevelAS[2] /* 11.3.a */, uint64_t& tlasSize)
+// 14.1.a
+void buildTopLevelAS(ID3D12Device5Ptr pDevice, ID3D12GraphicsCommandList4Ptr pCmdList, ID3D12ResourcePtr pBottomLevelAS[2], uint64_t& tlasSize, float rotation, bool update, Tutorial01::AccelerationStructureBuffers& buffers)
 {
     // First, get the size of the TLAS buffers and create them
     D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS inputs = {};
     inputs.DescsLayout = D3D12_ELEMENTS_LAYOUT_ARRAY;
-    inputs.Flags = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_NONE;
+    // 14.1.b
+    inputs.Flags = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_ALLOW_UPDATE;
     // 8.0.a 
     inputs.NumDescs = 3;
     inputs.Type = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL;
@@ -356,15 +350,26 @@ AccelerationStructureBuffers createTopLevelAS(ID3D12Device5Ptr pDevice, ID3D12Gr
     D3D12_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO info;
     pDevice->GetRaytracingAccelerationStructurePrebuildInfo(&inputs, &info);
 
-    // Create the buffers
-    AccelerationStructureBuffers buffers;
-    buffers.pScratch = createBuffer(pDevice, info.ScratchDataSizeInBytes, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, kDefaultHeapProps);
-    buffers.pResult = createBuffer(pDevice, info.ResultDataMaxSizeInBytes, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_RAYTRACING_ACCELERATION_STRUCTURE, kDefaultHeapProps);
-    tlasSize = info.ResultDataMaxSizeInBytes;
+    // 14.1.c
+    if (update)
+    {
+        // If this a request for an update, then the TLAS was already used in a DispatchRay() call. We need a UAV barrier to make sure the read operation ends before updating the buffer
+        D3D12_RESOURCE_BARRIER uavBarrier = {};
+        uavBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_UAV;
+        uavBarrier.UAV.pResource = buffers.pResult;
+        pCmdList->ResourceBarrier(1, &uavBarrier);
+    }
+    else
+    {
+        // Create the buffers
+        buffers.pScratch = createBuffer(pDevice, info.ScratchDataSizeInBytes, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, kDefaultHeapProps);
+        buffers.pResult = createBuffer(pDevice, info.ResultDataMaxSizeInBytes, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_RAYTRACING_ACCELERATION_STRUCTURE, kDefaultHeapProps);
+        // The instance desc should be inside a buffer, create and map the buffer
+        // 8.0.b
+        buffers.pInstanceDesc = createBuffer(pDevice, sizeof(D3D12_RAYTRACING_INSTANCE_DESC) * 3, D3D12_RESOURCE_FLAG_NONE, D3D12_RESOURCE_STATE_GENERIC_READ, kUploadHeapProps);
+        tlasSize = info.ResultDataMaxSizeInBytes;
+    }
 
-    // The instance desc should be inside a buffer, create and map the buffer
-    // 8.0.b
-    buffers.pInstanceDesc = createBuffer(pDevice, sizeof(D3D12_RAYTRACING_INSTANCE_DESC) * 3, D3D12_RESOURCE_FLAG_NONE, D3D12_RESOURCE_STATE_GENERIC_READ, kUploadHeapProps);
     D3D12_RAYTRACING_INSTANCE_DESC* pInstanceDesc;
     buffers.pInstanceDesc->Map(0, nullptr, (void**)&pInstanceDesc);
     ZeroMemory(pInstanceDesc, sizeof(D3D12_RAYTRACING_INSTANCE_DESC) * 3);
@@ -377,8 +382,10 @@ AccelerationStructureBuffers createTopLevelAS(ID3D12Device5Ptr pDevice, ID3D12Gr
     // 8.0.c
     mat4 transformation[3];
     transformation[0] = mat4(); // Identity
-    transformation[1] = translate(mat4(), vec3(-2, 0, 0));
-    transformation[2] = translate(mat4(), vec3(2, 0, 0));
+    // 14.1.d
+    mat4 rotationMat = eulerAngleY(rotation);
+    transformation[1] = translate(mat4(), vec3(-2, 0, 0)) * rotationMat;
+    transformation[2] = translate(mat4(), vec3(2, 0, 0)) * rotationMat;
 
     // 11.3.b Create the desc for the triangle/plane instance
     pInstanceDesc[0].InstanceID = 0;
@@ -411,6 +418,13 @@ AccelerationStructureBuffers createTopLevelAS(ID3D12Device5Ptr pDevice, ID3D12Gr
     asDesc.DestAccelerationStructureData = buffers.pResult->GetGPUVirtualAddress();
     asDesc.ScratchAccelerationStructureData = buffers.pScratch->GetGPUVirtualAddress();
 
+    // 14.1.e If this is an update operation, set the source buffer and the perform_update flag
+    if (update)
+    {
+        asDesc.Inputs.Flags |= D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_PERFORM_UPDATE;
+        asDesc.SourceAccelerationStructureData = buffers.pResult->GetGPUVirtualAddress();
+    }
+
     pCmdList->BuildRaytracingAccelerationStructure(&asDesc, 0, nullptr);
 
     // We need to insert a UAV barrier before using the acceleration structures in a raytracing operation
@@ -418,8 +432,6 @@ AccelerationStructureBuffers createTopLevelAS(ID3D12Device5Ptr pDevice, ID3D12Gr
     uavBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_UAV;
     uavBarrier.UAV.pResource = buffers.pResult;
     pCmdList->ResourceBarrier(1, &uavBarrier);
-
-    return buffers;
 }
 
 // 11.1.c
@@ -463,8 +475,9 @@ void Tutorial01::createAccelerationStructures()
     bottomLevelBuffers[1] = createBottomLevelAS(mpDevice, mpCmdList, mpVertexBuffer, vertexCount, 1);
     mpBottomLevelAS[1] = bottomLevelBuffers[1].pResult;
 
-    // 11.3.d
-    AccelerationStructureBuffers topLevelBuffers = createTopLevelAS(mpDevice, mpCmdList, mpBottomLevelAS, mTlasSize);
+    // 14.3.a Refit the top-level acceleration structure and set update to false
+    buildTopLevelAS(mpDevice, mpCmdList, mpBottomLevelAS, mTlasSize, mRotation, false, mpTopLevelAS);
+    mRotation += 0.005f;
 
     // The tutorial doesn't have any resource lifetime management, so we flush and sync here. This is not required by the DXR spec - you can submit the list whenever you like as long as you take care of the resources lifetime.
     mFenceValue = submitCommandList(mpCmdList, mpCmdQueue, mpFence, mFenceValue);
@@ -472,9 +485,6 @@ void Tutorial01::createAccelerationStructures()
     WaitForSingleObject(mFenceEvent, INFINITE);
     uint32_t bufferIndex = mpSwapChain->GetCurrentBackBufferIndex();
     mpCmdList->Reset(mFrameObjects[0].pCmdAllocator, nullptr);
-
-    // Store the AS buffers. The rest of the buffers will be released once we exit the function
-    mpTopLevelAS = topLevelBuffers.pResult;
 }
 
 // 4.1 Shader-Libraries
@@ -1035,7 +1045,8 @@ void Tutorial01::createShaderResources()
     D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
     srvDesc.ViewDimension = D3D12_SRV_DIMENSION_RAYTRACING_ACCELERATION_STRUCTURE;
     srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-    srvDesc.RaytracingAccelerationStructure.Location = mpTopLevelAS->GetGPUVirtualAddress();
+    // 14.3.d
+    srvDesc.RaytracingAccelerationStructure.Location = mpTopLevelAS.pResult->GetGPUVirtualAddress();
     D3D12_CPU_DESCRIPTOR_HANDLE srvHandle = mpSrvUavHeap->GetCPUDescriptorHandleForHeapStart();
     srvHandle.ptr += mpDevice->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
     mpDevice->CreateShaderResourceView(nullptr, &srvDesc, srvHandle);
@@ -1059,6 +1070,10 @@ void Tutorial01::onFrameRender()
 {
     // 2.12 onFrameRender
     uint32_t rtvIndex = beginFrame();
+
+    // Refit the top-level acceleration structure
+    buildTopLevelAS(mpDevice, mpCmdList, mpBottomLevelAS, mTlasSize, mRotation, true, mpTopLevelAS);
+    mRotation += 0.005f;
 
     // 6.4 this is rasterization and no longer needed
     //const float clearColor[4] = { 0.4f, 0.6f, 0.2f, 1.0f };

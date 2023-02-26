@@ -31,6 +31,14 @@
 class Tutorial01 : public Tutorial
 {
 public:
+    // 14.3.b bottom-level acceleration structure
+    struct AccelerationStructureBuffers
+    {
+        ID3D12ResourcePtr pScratch;
+        ID3D12ResourcePtr pResult;
+        ID3D12ResourcePtr pInstanceDesc;    // Used only for top-level AS
+    };
+
     // Tutorial 1 code
     void onLoad(HWND winHandle, uint32_t winWidth, uint32_t winHeight) override;
     void onFrameRender() override;
@@ -70,7 +78,8 @@ private:
     void createAccelerationStructures();
     // 11.1.a
     ID3D12ResourcePtr mpVertexBuffer[2];
-    ID3D12ResourcePtr mpTopLevelAS;
+    // 14.3.c
+    AccelerationStructureBuffers mpTopLevelAS;
     // 11.1.b
     ID3D12ResourcePtr mpBottomLevelAS[2];
     uint64_t mTlasSize = 0;
@@ -95,4 +104,7 @@ private:
     void createConstantBuffer();
     // 10.2.a 01-CreateWindow.h
     ID3D12ResourcePtr mpConstantBuffer[3];
+
+    // 14.2.b
+    float mRotation = 0;
 };
