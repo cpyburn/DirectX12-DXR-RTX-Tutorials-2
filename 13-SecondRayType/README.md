@@ -99,7 +99,7 @@ uint32_t planeHitRootIndex = index++; // 8
 ExportAssociation planeHitRootAssociation(&kPlaneHitGroup, 1, &(subobjects[planeHitRootIndex]));
 subobjects[index++] = planeHitRootAssociation.subobject; // 9 Associate Plane Hit Root Sig to Plane Hit Group
 ```
-* Add the createPlaneHitRootDesc() method above 
+* Add the createPlaneHitRootDesc() method above createRtPipelineState()
 ```c++
 // 13.2.h
 RootSignatureDesc createPlaneHitRootDesc()
@@ -130,7 +130,99 @@ RootSignatureDesc createPlaneHitRootDesc()
 std::array<D3D12_STATE_SUBOBJECT, 16> subobjects;
 ```
 
-## Shader-Table Layout
+## Code Changes
+At this stage, you should be familiar enough with the code that we don’t need to go over it in much
+detail. Instead, we will point to the location of the changes.
+
+### 13.3 SecondaryRayType.cpp
+- Change the value of InstanceContributionToHitGroupIndex for each instance in
+createTopLevelAS()
+
+- createShaderTable() – Create a larger shader-table with 11 entries and set the records based
+on the layout above.
+```c++
+// 13.3.a
+pInstanceDesc[i].InstanceContributionToHitGroupIndex = (i * 2) + 2;  // The indices are relative to to the start of the hit-table entries specified in Raytrace(), so we need 4 and 6
+```
+- When calling DispatchRays(), use the new miss and hit programs’ parameters and shader-table
+sizes.
+```c++
+raytraceDesc.MissShaderTable.SizeInBytes = mShaderTableEntrySize * 2;   // 13.3.b 2 miss-entries
+```
+```c++
+size_t hitOffset = 3 * mShaderTableEntrySize; // 13.3.c
+```
+```c++
+raytraceDesc.HitGroupTable.SizeInBytes = mShaderTableEntrySize * 8;    // 13.3.d 8 hit-entries
+```
+
+### 13.4 Ray-Gen Shader
+- Pass “2” as the MultiplierForGeometryContributionToShaderIndex when calling
+rtTrace().
+```c++
+TraceRay(gRtScene, 0 /*rayFlags*/, 0xFF, 0 /* ray index*/, 2 /* 13.4 MultiplierForGeometryContributionToShaderIndex */, 0, ray, payload);
+```
+- The RayContributionToHitGroupIndex and MissShaderIndex stay 0. In effect is the ray-
+index and we’d like to trace a primary ray.
+### 13.5 Plane CHS
+We completely reimplemented planeChs(). Let’s go over the code.
+
+We need to fetch the hit-point properties using the
+following intrinsics:
+```c++
+// 13.5.a
+float hitT = RayTCurrent();
+float3 rayDirW = WorldRayDirection();
+float3 rayOriginW = WorldRayOrigin();
+```
+- hitT – The parametric distance along the ray direction between the ray’s origin and the
+intersection point.
+- rayDirW – The world-space direction of the incoming ray. This is the value that was passed to
+TraceRay() by the ray-gen shader.
+- rayOriginW – The world-space origin of the incoming ray. This is the value that was passed to
+TraceRay() by the ray-gen shader.
+We start by finding the world-space position of the intersection point. This value is the origin of the new
+shadow-ray.
+```c++
+// 13.5.b Find the world-space hit position
+float3 posW = rayOriginW + hitT * rayDirW;
+
+// Fire a shadow ray. The direction is hard-coded here, but can be fetched from a constant-buffer
+RayDesc ray;
+ray.Origin = posW;
+```
+We simulate a directional light, so we use a constant direction for the shadow-ray.
+```c++
+// 13.5.c
+ray.Direction = normalize(float3(0.5, 0.5, -0.5));
+```
+
+We then set the ray’s extents. Note that we do not use 0 for TMin but set it into a small value. This is to
+avoid aliasing issues due to floating-point errors.
+```c++
+// 13.5.d
+ray.TMin = 0.01;
+ray.TMax = 100000;
+```
+
+Now we can trace the ray:
+```c++
+// 13.5.e
+ShadowPayload shadowPayload;
+TraceRay(gRtScene, 0  /*rayFlags*/, 0xFF, 1 /* ray index*/, 0, 1, ray, shadowPayload);
+```
+
+Note that we set RayContributionToHitGroupIndex and MissShaderIndex to 1, which is the ray-
+index.
+
+The result of this TraceRay() call will be used to compute the intersection point’s color.
+```c++
+// 13.5.f
+float factor = shadowPayload.hit ? 0.1 : 1.0;
+payload.color = float4(0.9f, 0.9f, 0.9f, 1.0f) * factor;
+```
+
+## 13.6 Shader-Table Layout
 By now it should be clear that the shader-table layout and indexing controls which shaders will be
 invoked when a ray hit a geometry or missed everything in the scene.
 For reference, here is the hit-program indexing computation:
@@ -187,49 +279,10 @@ we can treat this value as the ray-index.
     * 0 for instance 0
     * 4 for instance 1
     * 6 for instance 2
-
-## Code Changes
-At this stage, you should be familiar enough with the code that we don’t need to go over it in much
-detail. Instead, we will point to the location of the changes.
-
-### 13-SecondaryRayType.cpp
-- Change the value of InstanceContributionToHitGroupIndex for each instance in
-createTopLevelAS()
-
-- createShaderTable() – Create a larger shader-table with 11 entries and set the records based
-on the layout above.
-- When calling DispatchRays(), use the new miss and hit programs’ parameters and shader-table
-sizes.
-### Ray-Gen Shader
-- Pass “2” as the MultiplierForGeometryContributionToShaderIndex when calling
-rtTrace().
-- The RayContributionToHitGroupIndex and MissShaderIndex stay 0. In effect is the ray-
-index and we’d like to trace a primary ray.
-### Plane CHS
-We completely reimplemented planeChs(). Let’s go over the code.
-
-The function signature stayed the same. Next, we need to fetch the hit-point properties using the
-following intrinsics:
-
-- hitT – The parametric distance along the ray direction between the ray’s origin and the
-intersection point.
-- rayDirW – The world-space direction of the incoming ray. This is the value that was passed to
-TraceRay() by the ray-gen shader.
-- rayOriginW – The world-space origin of the incoming ray. This is the value that was passed to
-TraceRay() by the ray-gen shader.
-We start by finding the world-space position of the intersection point. This value is the origin of the new
-shadow-ray.
-
-We simulate a directional light, so we use a constant direction for the shadow-ray.
-
-We then set the ray’s extents. Note that we do not use 0 for TMin but set it into a small value. This is to
-avoid aliasing issues due to floating-point errors.
-
-Now we can trace the ray:
-
-Note that we set RayContributionToHitGroupIndex and MissShaderIndex to 1, which is the ray-
-index.
-
-The result of this TraceRay() call will be used to compute the intersection point’s color.
+```c++
+// 
+```
 
 Now that the coding is done, we can launch our application and see some shadows on the plane.
+![image](https://user-images.githubusercontent.com/17934438/221421442-3b6cccfc-29b4-4377-a311-0835d6cee355.png)
+
