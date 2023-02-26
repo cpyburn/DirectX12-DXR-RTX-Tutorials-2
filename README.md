@@ -38,4 +38,5 @@ Unlike Nvidia's tutorials, each tutorial builds upon the tutorial before it and 
 [13-SecondRayType](https://github.com/cpyburn/DirectX12-DXR-RTX-Tutorials-2/tree/main/13-SecondRayType)
 ![image](https://user-images.githubusercontent.com/17934438/221421442-3b6cccfc-29b4-4377-a311-0835d6cee355.png)
 
-[14-Refit]()
+[14-Refit](https://github.com/cpyburn/DirectX12-DXR-RTX-Tutorials-2/tree/main/14-Refit)
+![image](https://user-images.githubusercontent.com/17934438/221430337-44e95f40-e64a-4300-9306-f24221888543.png)
