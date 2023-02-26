@@ -8,229 +8,281 @@ Requirements:
 - [Windows 10 SDK version 1809 (10.0.17763.0)](https://developer.microsoft.com/en-us/windows/downloads/sdk-archive)
 - Visual Studio 2022
 
-# DXR Tutorial 12
+# DXR Tutorial 13
 
-## 12.0 Per-Geometry Hit-Shader
+## 13.0 Adding a Second Ray Type
 
 ## Overview
-In the previous tutorial we added a new geometry – a plane. The result wasn’t that impressive – the
-plane used the same hit-shader and the same vertex colors as for the triangle, resulting in colorful
-image.
+So far, we’ve been dealing with a single ray type – the primary ray. In ray-tracing, we usually want to
+trace rays originating at the hit-point. These are called secondary rays. We use them to check if the light-
+source hits the surface, compute reflection, AO and more.
 
-In this tutorial, we will implement a new hit-shader specific to the plane and show how to invoke it
-when the plane is hit by a ray.
+In this tutorial we learn how to add a new ray type. We will add support for shadows using shadow-rays.
+We will use a simplified version of the shadow-ray, where only the plane is a shadow receiver. When a
+primary-ray hits the plane, we will trace a ray from the hit-point in the direction of the light source using
+the same TLAS. If the ray hits a geometry, then the hit point is in shadow. Otherwise it is lit.
 
-## 12.1 Plane Hit-Program
-For the plane, we will create a simple hit-program which returns a constant color. The following code
-can be found in ’12-Shaders.hlsl’
+## 13.1 The Shadow Ray
+A “ray” is a combination of a miss-program and a hit-program. For shadows, we only care if there was a
+hit or no. Both the closest-hit and miss shaders can be found in `13-Shaders.hlsl`
 ```c++
-// 12.1.a
-[shader("closesthit")]
-void planeChs(inout RayPayload payload, in BuiltInTriangleIntersectionAttributes attribs)
+// 13.1.a
+struct ShadowPayload
 {
-    payload.color = 0.9f;
+    bool hit;
+};
+
+// 13.1.b
+[shader("closesthit")]
+void shadowChs(inout ShadowPayload payload, in BuiltInTriangleIntersectionAttributes attribs)
+{
+    payload.hit = true;
+}
+
+// 13.1.c
+[shader("miss")]
+void shadowMiss(inout ShadowPayload payload)
+{
+    payload.hit = false;
 }
 ```
+The payload contains a single Boolean value.
 
+Theoretically, it’s more efficient to use an any-hit shader instead of closest-hit shader for shadow-rays.
+In our case it will not work, since we create the acceleration structures with
+D3D12_RAYTRACING_GEOMETRY_FLAG_OPAQUE flag, which means the AHS will not be executed.
+
+## 13.2 Ray-Tracing Pipeline State Object
 We need to make the following changes to createRtPipelineState():
-  * 13 subojbects
-  ```c++
-  // 12.1.b
-  std::array<D3D12_STATE_SUBOBJECT, 13> subobjects;
-  ```
-  * Create a new HitProgram for the plane CHS.
-  ```c++
-  // 12.1.c  Create the plane HitProgram
-  HitProgram planeHitProgram(nullptr, kPlaneChs, kPlaneHitGroup);
-  subobjects[index++] = planeHitProgram.subObject; // 2 Plane Hit Group
-  ```
-  * Associate the empty-root signature with the new plane hit-group
-  ```c++
-  // 12.1.d
-  uint32_t emptyRootIndex = index++; // 7
-  const WCHAR* emptyRootExport[] = { kPlaneChs, kMissShader };
-  ExportAssociation emptyRootAssociation(emptyRootExport, arraysize(emptyRootExport), &(subobjects[emptyRootIndex]));
-  subobjects[index++] = emptyRootAssociation.subobject; // 8 Associate Miss Root Sig to Miss Shader
-  ```
-  * Associate the shader-config sub-object with the plane hit-group
-  ```c++
-  const WCHAR* shaderExports[] = { kMissShader, kClosestHitShader, kPlaneChs /*12.1.e*/, kRayGenShader};
-  ```
-Create the string representations (line 582~)
+* In createDxilLibrary (), add the new entry points to the list.
 ```c++
-// 12.1.f
-static const WCHAR* kPlaneChs = L"planeChs";
-static const WCHAR* kPlaneHitGroup = L"PlaneHitGroup";
+// 13.2.a
+static const WCHAR* kShadowChs = L"shadowChs";
+static const WCHAR* kShadowMiss = L"shadowMiss";
+static const WCHAR* kShadowHitGroup = L"ShadowHitGroup";
+```
+```c++
+const WCHAR* entryPoints[] = { kRayGenShader, kMissShader, kPlaneChs /* 12.3.e */, kClosestHitShader, kShadowMiss /* 12.3.b */, kShadowChs /* 12.3.b */ };
+```
+* Create a new HitProgram for the shadowChs().
+```c++
+// 13.2.c Create the shadow-ray hit group
+HitProgram shadowHitProgram(nullptr, kShadowChs, kShadowHitGroup);
+subobjects[index++] = shadowHitProgram.subObject; // 3 Shadow Hit Group
+```
+* We are going to use the empty-root signature with the shadow miss and hit-program, so we add
+them to emptyRootAssociation.
+```c++
+const WCHAR* emptyRootExport[] = { kMissShader, kShadowChs /* 13.2.d */, kShadowMiss /* 13.2.d */};
+```
+* Include the shadow shaders in the ExportAssociation to the ShaderConfig sub-object. Even
+though the Shadow payload is a different size, there can only be one defined max size per State
+Object. It is valid to associate your shaders to multiple ShaderConfig sub-objects if their values
+are the same, but we will only use one here for simplicity.
+```c++
+const WCHAR* shaderExports[] = { kMissShader, kClosestHitShader, kPlaneChs /*12.1.e*/, kRayGenShader, kShadowMiss /* 13.2.e */, kShadowChs /* 13.2.e */ };
+```
+* Change the maxTraceRecursionDepth in the PipelineConfig object to 2. We’re going to call
+TraceRay() once from the ray-gen shader and once from the plane-CHS.
+```c++
+PipelineConfig config(2); // 13.2.f
+```
+* Create and associate a root-signature with the plane-CHS. This happens in
+createPlaneHitRootDesc(). This root-signature contains a single SRV which will be used to bind
+the TLAS to the shader.
+```c++
+// 13.2.g Create the plane hit root-signature and association
+LocalRootSignature planeHitRootSignature(mpDevice, createPlaneHitRootDesc().desc);
+subobjects[index] = planeHitRootSignature.subobject; // 8 Plane Hit Root Sig
+
+uint32_t planeHitRootIndex = index++; // 8
+ExportAssociation planeHitRootAssociation(&kPlaneHitGroup, 1, &(subobjects[planeHitRootIndex]));
+subobjects[index++] = planeHitRootAssociation.subobject; // 9 Associate Plane Hit Root Sig to Plane Hit Group
+```
+* Add the createPlaneHitRootDesc() method above createRtPipelineState()
+```c++
+// 13.2.h
+RootSignatureDesc createPlaneHitRootDesc()
+{
+    RootSignatureDesc desc;
+    desc.range.resize(1);
+    desc.range[0].BaseShaderRegister = 0;
+    desc.range[0].NumDescriptors = 1;
+    desc.range[0].RegisterSpace = 0;
+    desc.range[0].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+    desc.range[0].OffsetInDescriptorsFromTableStart = 0;
+
+    desc.rootParams.resize(1);
+    desc.rootParams[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+    desc.rootParams[0].DescriptorTable.NumDescriptorRanges = 1;
+    desc.rootParams[0].DescriptorTable.pDescriptorRanges = desc.range.data();
+
+    desc.desc.NumParameters = 1;
+    desc.desc.pParameters = desc.rootParams.data();
+    desc.desc.Flags = D3D12_ROOT_SIGNATURE_FLAG_LOCAL_ROOT_SIGNATURE;
+
+    return desc;
+}
+```
+* Increase the subobjects array
+```c++
+// 13.2.i
+std::array<D3D12_STATE_SUBOBJECT, 16> subobjects;
 ```
 
-## 12.2 Shader-Table Layout
-We would like the ray-tracing pipeline to invoke the new hit-program when the plane is hit. In tutorial
-10 we learned that the hit-program indexing is computed as follows:
+## Code Changes
+At this stage, you should be familiar enough with the code that we don’t need to go over it in much
+detail. Instead, we will point to the location of the changes.
 
-  (HitStartAddress +
+### 13.3 SecondaryRayType.cpp
+- Change the value of InstanceContributionToHitGroupIndex for each instance in
+createTopLevelAS()
+
+- createShaderTable() – Create a larger shader-table with 11 entries and set the records based
+on the layout above.
+```c++
+// 13.3.a
+pInstanceDesc[i].InstanceContributionToHitGroupIndex = (i * 2) + 2;  // The indices are relative to to the start of the hit-table entries specified in Raytrace(), so we need 4 and 6
+```
+- When calling DispatchRays(), use the new miss and hit programs’ parameters and shader-table
+sizes.
+```c++
+raytraceDesc.MissShaderTable.SizeInBytes = mShaderTableEntrySize * 2;   // 13.3.b 2 miss-entries
+```
+```c++
+size_t hitOffset = 3 * mShaderTableEntrySize; // 13.3.c
+```
+```c++
+raytraceDesc.HitGroupTable.SizeInBytes = mShaderTableEntrySize * 8;    // 13.3.d 8 hit-entries
+```
+
+### 13.4 Ray-Gen Shader
+- Pass “2” as the MultiplierForGeometryContributionToShaderIndex when calling
+rtTrace().
+```c++
+TraceRay(gRtScene, 0 /*rayFlags*/, 0xFF, 0 /* ray index*/, 2 /* 13.4 MultiplierForGeometryContributionToShaderIndex */, 0, ray, payload);
+```
+- The RayContributionToHitGroupIndex and MissShaderIndex stay 0. In effect is the ray-
+index and we’d like to trace a primary ray.
+### 13.5 Plane CHS
+We completely reimplemented planeChs(). Let’s go over the code.
+
+We need to fetch the hit-point properties using the
+following intrinsics:
+```c++
+// 13.5.a
+float hitT = RayTCurrent();
+float3 rayDirW = WorldRayDirection();
+float3 rayOriginW = WorldRayOrigin();
+```
+- hitT – The parametric distance along the ray direction between the ray’s origin and the
+intersection point.
+- rayDirW – The world-space direction of the incoming ray. This is the value that was passed to
+TraceRay() by the ray-gen shader.
+- rayOriginW – The world-space origin of the incoming ray. This is the value that was passed to
+TraceRay() by the ray-gen shader.
+We start by finding the world-space position of the intersection point. This value is the origin of the new
+shadow-ray.
+```c++
+// 13.5.b Find the world-space hit position
+float3 posW = rayOriginW + hitT * rayDirW;
+
+// Fire a shadow ray. The direction is hard-coded here, but can be fetched from a constant-buffer
+RayDesc ray;
+ray.Origin = posW;
+```
+We simulate a directional light, so we use a constant direction for the shadow-ray.
+```c++
+// 13.5.c
+ray.Direction = normalize(float3(0.5, 0.5, -0.5));
+```
+
+We then set the ray’s extents. Note that we do not use 0 for TMin but set it into a small value. This is to
+avoid aliasing issues due to floating-point errors.
+```c++
+// 13.5.d
+ray.TMin = 0.01;
+ray.TMax = 100000;
+```
+
+Now we can trace the ray:
+```c++
+// 13.5.e
+ShadowPayload shadowPayload;
+TraceRay(gRtScene, 0  /*rayFlags*/, 0xFF, 1 /* ray index*/, 0, 1, ray, shadowPayload);
+```
+
+Note that we set RayContributionToHitGroupIndex and MissShaderIndex to 1, which is the ray-
+index.
+
+The result of this TraceRay() call will be used to compute the intersection point’s color.
+```c++
+// 13.5.f
+float factor = shadowPayload.hit ? 0.1 : 1.0;
+payload.color = float4(0.9f, 0.9f, 0.9f, 1.0f) * factor;
+```
+
+## 13.6 Shader-Table Layout
+By now it should be clear that the shader-table layout and indexing controls which shaders will be
+invoked when a ray hit a geometry or missed everything in the scene.
+For reference, here is the hit-program indexing computation:
+
+entryIndex =
   InstanceContributionToHitGroupIndex +
   GeometryIndex * MultiplierForGeometryContributionToShaderIndex +
   RayContributionToHitGroupIndex)
 
-To understand how it can be used to invoke a different hit-program, let’s look again at our TLAS.
+And this is for the miss-program it’s missShaderIndex passed to TraceRay().
 
-We have 3 instances:
+Let’s look at the new shader-table layout, and we’ll follow up with explanation on the indexing.
 
-  - Instance 0 with 2 geometries.
-    * Geometry 0 – triangle
-    * Geometry 1 – plane
-  - Instance 1 – single geometry, a triangle
-  - Instance 2 – single geometry, a triangle
-  
-Geometries in the same instance share the same InstanceContributionToHitGroupIndex. To direct
-different geometries to different shader-table records, we need to use GeometryIndex.
+![image](https://user-images.githubusercontent.com/17934438/221415166-6b60829f-1d7f-46b4-bac1-ec364a266e38.png)
 
-Our new shader-table will look like this:
+We have 11 entries:
+  * Entry 0 - Ray-gen program
+  * Entry 1 - Miss program for the primary ray
+  * Entry 2 - Miss program for the shadow ray
+  * Entries 3,4 - Hit programs for triangle 0 (primary followed by shadow)
+  * Entries 5,6 - Hit programs for the plane (primary followed by shadow)
+  * Entries 7,8 - Hit programs for triangle 1 (primary followed by shadow)
+  * Entries 9,10 - Hit programs for triangle 2 (primary followed by shadow)
 
-![image](https://user-images.githubusercontent.com/17934438/221359382-c4667656-0e00-4986-ac49-3855373507ab.png)
+This is a common layout when multiple rays are required. In our case the records are tightly packed and
+use a single buffer, but that’s not mandatory. The layout follows these 2 conventions:
+* Records for each geometry are consecutive.
+* The shadow-ray record always follows its matching primary-ray record.
 
-Let’s see how this layout works with the hit-program index computation:
+## Shader-Table Indexing
+As a reminder, here is a summary of the different values used to calculate an shader-table address:
+  * D3D12_DISPATCH_RAYS_DESC contains StartAddress and StrideInBytes fields per shader
+type.
+  * RayContributionToHitGroupIndex – One of the parameters of the HLSL’s TraceRay()
+function. The maximum allowed value is 15.
+  * MultiplierForGeometryContributionToShaderIndex – One of the parameters of the HLSL’s
+TraceRay() function. The maximum allowed value is 15.
+  * MissShaderIndex – One of the parameters of the HLSL’s TraceRay () function.
+  * InstanceContributionToHitGroupIndex – This value is specified when creating the TLAS, as
+part of D3D12_RAYTRACING_INSTANCE_DESC.
 
-    - BaseIndex is 2. It’s shared between all instances and geometries.
-    - InstanceContributionToHitGroupIndex is per instance, specified when building the TLAS.
-        * For instance 0 it will be 0.
-        * For instance 1 it will be 2 (we need to skip both geometries in instance 0).
-        * For instance 2 it will be 3.
-    - GeometryIndex is generated automatically by the pipeline. This is the index of the geometry
-    within an instance.
-        * This value will be 0 for all the triangles, since they are the first geometry in the instance.
-        * It will be 1 for the plane, since it’s the second geometry in the first instance.
-    - MultiplierForGeometryContributionToShaderIndex should be 1.
-        * This value doesn’t affect the triangles (their GeometryIndex is 0).
-        * For the plane, (GeometryIndex *
-    MultiplierForGeometryContributionToShaderIndex) will result in 1, which is the
-    required offset of the record relative to the start of the instance.
-    - RayContributionToHitGroupIndex should be 0.
-    
-You can plug these values into the formula above to see the final value for each geometry.
-
-## 12.3 Shader-Table Changes
-Now that we understand the new layout and the indexing, we can make the required code changes.
-
-First, we need to create a larger shader-table. We need 6 entries in total. This happens at the beginning
-of createShaderTable().
-
-Next, we need to initialize the shader-table hit-program records. The first entry is for the triangle in
-instance 0:
+We will set these values as follows:
+  * MissStartAddress - the address of the second shader-table entry
+  * HitBaseIndex - the address of the third shader-table entry
+  * RayContributionToHitGroupIndex – The ray-index. 0 For the primary-ray, 1 for the shadow-
+ray. The simplest way to understand this is to look at the hit-program index computation
+mentioned above.
+  * MultiplierForGeometryContributionToShaderIndex – This only affects instances with
+multiple geometries. In our case, instance 0. This is the distance in records between geometries.
+In our case it’s the ray count (2).
+  * MissShaderIndex – Since our miss-shaders entries are stored contiguously in the shader-table,
+we can treat this value as the ray-index.
+  * InstanceContributionToHitGroupIndex
+    * 0 for instance 0
+    * 4 for instance 1
+    * 6 for instance 2
 ```c++
-// Entry 2 - Triangle 0 hit program. ProgramID and constant-buffer data
-uint8_t* pEntry2 = pData + mShaderTableEntrySize * 2;
-memcpy(pEntry2, pRtsoProps-&gt;GetShaderIdentifier(kTriHitGroup), progIdSize);
-*(D3D12_GPU_VIRTUAL_ADDRESS*)(pEntry2 + progIdSize) = mpConstantBuffer[0]-&gt;GetGPUVirtualAddress();
+// 
 ```
 
-This code is similar to the code from the previous tutorials.
-
-Now let’s initialize the entry for the plane. We have no shader resources, so we only need to set the
-program identifier of the plane hit-program.
-```c++
-// Entry 3 - Plane hit program. ProgramID only
-uint8_t* pEntry3 = pData + mShaderTableEntrySize * 3;
-memcpy(pEntry3, pRtsoProps-&gt;GetShaderIdentifier(kPlaneHitGroup), progIdSize);
-```
-
-Entries 4 and 5 are for the 2 other triangles. The code is very similar to the code we used for the first
-triangle.
-```c++
-// 12.3.a
-void Tutorial01::createShaderTable()
-{
-    /** The shader-table layout is as follows:
-        Entry 0 - Ray-gen program
-        Entry 1 - Miss program
-        Entry 2 - Hit program for triangle 0
-        Entry 3 - Hit program for the plane
-        Entry 4 - Hit program for triangle 1
-        Entry 5 - Hit program for triangle 2
-        All entries in the shader-table must have the same size, so we will choose it base on the largest required entry.
-        The triangle hit program requires the largest entry - sizeof(program identifier) + 8 bytes for the constant-buffer root descriptor.
-        The entry size must be aligned up to D3D12_RAYTRACING_SHADER_RECORD_BYTE_ALIGNMENT
-    */
-
-    // Calculate the size and create the buffer
-    mShaderTableEntrySize = D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES;
-    mShaderTableEntrySize += 8; // The hit shader constant-buffer descriptor
-    mShaderTableEntrySize = align_to(D3D12_RAYTRACING_SHADER_RECORD_BYTE_ALIGNMENT, mShaderTableEntrySize);
-    uint32_t shaderTableSize = mShaderTableEntrySize * 6;
-
-    // For simplicity, we create the shader-table on the upload heap. You can also create it on the default heap
-    mpShaderTable = createBuffer(mpDevice, shaderTableSize, D3D12_RESOURCE_FLAG_NONE, D3D12_RESOURCE_STATE_GENERIC_READ, kUploadHeapProps);
-
-    // Map the buffer
-    uint8_t* pData;
-    d3d_call(mpShaderTable->Map(0, nullptr, (void**)&pData));
-
-    MAKE_SMART_COM_PTR(ID3D12StateObjectProperties);
-    ID3D12StateObjectPropertiesPtr pRtsoProps;
-    mpPipelineState->QueryInterface(IID_PPV_ARGS(&pRtsoProps));
-
-    // Entry 0 - ray-gen program ID and descriptor data
-    memcpy(pData, pRtsoProps->GetShaderIdentifier(kRayGenShader), D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES);
-    uint64_t heapStart = mpSrvUavHeap->GetGPUDescriptorHandleForHeapStart().ptr;
-    *(uint64_t*)(pData + D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES) = heapStart;
-
-    // Entry 1 - miss program
-    memcpy(pData + mShaderTableEntrySize, pRtsoProps->GetShaderIdentifier(kMissShader), D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES);
-
-    // Entry 2 - Triangle 0 hit program. ProgramID and constant-buffer data
-    uint8_t* pEntry2 = pData + mShaderTableEntrySize * 2;
-    memcpy(pEntry2, pRtsoProps->GetShaderIdentifier(kHitGroup), D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES);
-    assert(((uint64_t)(pEntry2 + D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES) % 8) == 0); // Root descriptor must be stored at an 8-byte aligned address
-    *(D3D12_GPU_VIRTUAL_ADDRESS*)(pEntry2 + D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES) = mpConstantBuffer[0]->GetGPUVirtualAddress();
-
-    // Entry 3 - Plane hit program. ProgramID only
-    uint8_t* pEntry3 = pData + mShaderTableEntrySize * 3;
-    memcpy(pEntry3, pRtsoProps->GetShaderIdentifier(kPlaneHitGroup), D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES);
-
-    // Entry 4 - Triangle 1 hit. ProgramID and constant-buffer data
-    uint8_t* pEntry4 = pData + mShaderTableEntrySize * 4;
-    memcpy(pEntry4, pRtsoProps->GetShaderIdentifier(kHitGroup), D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES);
-    assert(((uint64_t)(pEntry4 + D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES) % 8) == 0); // Root descriptor must be stored at an 8-byte aligned address
-    *(D3D12_GPU_VIRTUAL_ADDRESS*)(pEntry4 + D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES) = mpConstantBuffer[1]->GetGPUVirtualAddress();
-
-    // Entry 5 - Triangle 2 hit. ProgramID and constant-buffer data
-    uint8_t* pEntry5 = pData + mShaderTableEntrySize * 5;
-    memcpy(pEntry5, pRtsoProps->GetShaderIdentifier(kHitGroup), D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES);
-    assert(((uint64_t)(pEntry5 + D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES) % 8) == 0); // Root descriptor must be stored at an 8-byte aligned address
-    *(D3D12_GPU_VIRTUAL_ADDRESS*)(pEntry5 + D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES) = mpConstantBuffer[2]->GetGPUVirtualAddress();
-
-    // Unmap
-    mpShaderTable->Unmap(0, nullptr);
-}
-```
-
-Four final changes:
-
-* We need to change the InstanceContributionToHitGroupIndex for the second and third
-instances. This happens during TLAS creation.
-```c++
-// 12.3.b
-pInstanceDesc[i].InstanceContributionToHitGroupIndex = i + 1;  // The plane takes an additional entry in the shader-table, hence the +1
-```
-
-* Hit the ray-generation shader (12-Shaders.hlsl), we need to change the TraceRay() call. We
-need to pass `1` as the MultiplierForGeometryContributionToShaderIndex argument.
-```c++
-TraceRay(gRtScene, 0 /*rayFlags*/, 0xFF, 0 /* ray index*/, 1 /* 12.3.c MultiplierForGeometryContributionToShaderIndex */, 0, ray, payload);
-```
-
-* In onFrameRender(), set raytraceDesc.HitGroupTable.SizeInBytes to mShaderTableEntrySize * 4.
-```c++
-// 12.3.d
-raytraceDesc.HitGroupTable.SizeInBytes = mShaderTableEntrySize * 4;
-```
-
-* update createDxilLibrary()
-```c++
-const WCHAR* entryPoints[] = { kRayGenShader, kMissShader, kPlaneChs /* 12.3.e */, kClosestHitShader};
-```
-
-And that should do it!
-![image](https://user-images.githubusercontent.com/17934438/221361293-e01bac6d-20e2-4c53-bd01-a1fb6cdcb0cb.png)
-
+Now that the coding is done, we can launch our application and see some shadows on the plane.
+![image](https://user-images.githubusercontent.com/17934438/221421442-3b6cccfc-29b4-4377-a311-0835d6cee355.png)
 
