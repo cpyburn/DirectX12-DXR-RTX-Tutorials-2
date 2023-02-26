@@ -52,26 +52,83 @@ Theoretically, it’s more efficient to use an any-hit shader instead of closest
 In our case it will not work, since we create the acceleration structures with
 D3D12_RAYTRACING_GEOMETRY_FLAG_OPAQUE flag, which means the AHS will not be executed.
 
-## Ray-Tracing Pipeline State Object
+## 13.2 Ray-Tracing Pipeline State Object
 We need to make the following changes to createRtPipelineState():
 * In createDxilLibrary (), add the new entry points to the list.
 ```c++
+// 13.2.a
 static const WCHAR* kShadowChs = L"shadowChs";
 static const WCHAR* kShadowMiss = L"shadowMiss";
 static const WCHAR* kShadowHitGroup = L"ShadowHitGroup";
 ```
+```c++
+const WCHAR* entryPoints[] = { kRayGenShader, kMissShader, kPlaneChs /* 12.3.e */, kClosestHitShader, kShadowMiss /* 12.3.b */, kShadowChs /* 12.3.b */ };
+```
 * Create a new HitProgram for the shadowChs().
+```c++
+// 13.2.c Create the shadow-ray hit group
+HitProgram shadowHitProgram(nullptr, kShadowChs, kShadowHitGroup);
+subobjects[index++] = shadowHitProgram.subObject; // 3 Shadow Hit Group
+```
 * We are going to use the empty-root signature with the shadow miss and hit-program, so we add
 them to emptyRootAssociation.
+```c++
+const WCHAR* emptyRootExport[] = { kMissShader, kShadowChs /* 13.2.d */, kShadowMiss /* 13.2.d */};
+```
 * Include the shadow shaders in the ExportAssociation to the ShaderConfig sub-object. Even
 though the Shadow payload is a different size, there can only be one defined max size per State
 Object. It is valid to associate your shaders to multiple ShaderConfig sub-objects if their values
 are the same, but we will only use one here for simplicity.
+```c++
+const WCHAR* shaderExports[] = { kMissShader, kClosestHitShader, kPlaneChs /*12.1.e*/, kRayGenShader, kShadowMiss /* 13.2.e */, kShadowChs /* 13.2.e */ };
+```
 * Change the maxTraceRecursionDepth in the PipelineConfig object to 2. We’re going to call
 TraceRay() once from the ray-gen shader and once from the plane-CHS.
+```c++
+PipelineConfig config(2); // 13.2.f
+```
 * Create and associate a root-signature with the plane-CHS. This happens in
 createPlaneHitRootDesc(). This root-signature contains a single SRV which will be used to bind
 the TLAS to the shader.
+```c++
+// 13.2.g Create the plane hit root-signature and association
+LocalRootSignature planeHitRootSignature(mpDevice, createPlaneHitRootDesc().desc);
+subobjects[index] = planeHitRootSignature.subobject; // 8 Plane Hit Root Sig
+
+uint32_t planeHitRootIndex = index++; // 8
+ExportAssociation planeHitRootAssociation(&kPlaneHitGroup, 1, &(subobjects[planeHitRootIndex]));
+subobjects[index++] = planeHitRootAssociation.subobject; // 9 Associate Plane Hit Root Sig to Plane Hit Group
+```
+* Add the createPlaneHitRootDesc() method above 
+```c++
+// 13.2.h
+RootSignatureDesc createPlaneHitRootDesc()
+{
+    RootSignatureDesc desc;
+    desc.range.resize(1);
+    desc.range[0].BaseShaderRegister = 0;
+    desc.range[0].NumDescriptors = 1;
+    desc.range[0].RegisterSpace = 0;
+    desc.range[0].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+    desc.range[0].OffsetInDescriptorsFromTableStart = 0;
+
+    desc.rootParams.resize(1);
+    desc.rootParams[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+    desc.rootParams[0].DescriptorTable.NumDescriptorRanges = 1;
+    desc.rootParams[0].DescriptorTable.pDescriptorRanges = desc.range.data();
+
+    desc.desc.NumParameters = 1;
+    desc.desc.pParameters = desc.rootParams.data();
+    desc.desc.Flags = D3D12_ROOT_SIGNATURE_FLAG_LOCAL_ROOT_SIGNATURE;
+
+    return desc;
+}
+```
+* Increase the subobjects array
+```c++
+// 13.2.i
+std::array<D3D12_STATE_SUBOBJECT, 16> subobjects;
+```
 
 ## Shader-Table Layout
 By now it should be clear that the shader-table layout and indexing controls which shaders will be
