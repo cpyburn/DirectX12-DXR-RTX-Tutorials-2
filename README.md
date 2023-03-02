@@ -23,22 +23,22 @@ Unlike Nvidia's tutorials, each tutorial builds upon the tutorial before it and 
 ### [8-Instancing](https://github.com/cpyburn/DirectX-DXR-RTX-Tutorials-2/tree/main/8-Instancing) - How to instance in the ray tracing top level acceleration structure
 ![image](https://user-images.githubusercontent.com/17934438/221300748-8700b062-8101-4ae6-8c58-dc933d7dfb22.png)
 
-### [9-ConstantBuffer](https://github.com/cpyburn/DirectX-DXR-RTX-Tutorials-2/tree/main/9-ConstantBuffer) - How to use a per instance ray tracing constant buffer
+### [9-ConstantBuffer](https://github.com/cpyburn/DirectX-DXR-RTX-Tutorials-2/tree/main/9-ConstantBuffer) - How to use a ray tracing constant buffer
 ![image](https://user-images.githubusercontent.com/17934438/221318621-82e15186-8c2c-41ff-843d-3f68235d8715.png)
 
-### [9-Bonus:ConstantBuffer](https://github.com/cpyburn/DirectX-DXR-RTX-Tutorials-2/tree/main/9-BonusConstantBuffer) - 
+### [9-Bonus:ConstantBuffer](https://github.com/cpyburn/DirectX-DXR-RTX-Tutorials-2/tree/main/9-BonusConstantBuffer) - Bonus - How to add a constant buffer to the ray tracing miss shader
 ![image](https://user-images.githubusercontent.com/17934438/221323878-d6feacc0-14b4-413c-b14e-abf0d648e708.png)
 
-### [10-PerInstanceConstantBuffer](https://github.com/cpyburn/DirectX12-DXR-RTX-Tutorials-2/tree/main/10-PerInstanceConstantBuffer)
+### [10-PerInstanceConstantBuffer](https://github.com/cpyburn/DirectX12-DXR-RTX-Tutorials-2/tree/main/10-PerInstanceConstantBuffer) - How to use a per instance ray tracing constant buffer
 ![image](https://user-images.githubusercontent.com/17934438/221327968-8264e38d-67c6-4fe2-bc6b-bf63b00b13ae.png)
 
-### [11-SecondGeometry](https://github.com/cpyburn/DirectX12-DXR-RTX-Tutorials-2/tree/main/11-SecondGeometry)
+### [11-SecondGeometry](https://github.com/cpyburn/DirectX12-DXR-RTX-Tutorials-2/tree/main/11-SecondGeometry) - How to add a second ray tracing geometry
 ![image](https://user-images.githubusercontent.com/17934438/221356591-d619a603-33b4-4fd1-8322-606751104621.png)
 
-### [13-SecondRayType](https://github.com/cpyburn/DirectX12-DXR-RTX-Tutorials-2/tree/main/13-SecondRayType)
+### [13-SecondRayType](https://github.com/cpyburn/DirectX12-DXR-RTX-Tutorials-2/tree/main/13-SecondRayType) - How to add another ray, a shadow ray!
 ![image](https://user-images.githubusercontent.com/17934438/221421442-3b6cccfc-29b4-4377-a311-0835d6cee355.png)
 
-### [14-Refit](https://github.com/cpyburn/DirectX12-DXR-RTX-Tutorials-2/tree/main/14-Refit)
+### [14-Refit](https://github.com/cpyburn/DirectX12-DXR-RTX-Tutorials-2/tree/main/14-Refit) - How to update the ray tracing top level acceleration structure
 ![image](https://user-images.githubusercontent.com/17934438/221430337-44e95f40-e64a-4300-9306-f24221888543.png)
 
 ### If you finished these, head on over to the [Advanced Tutorials](https://github.com/cpyburn/DirectX12-DXR-RTX-Tutorials-3)
