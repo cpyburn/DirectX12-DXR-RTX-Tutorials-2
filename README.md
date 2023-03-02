@@ -5,28 +5,28 @@ Goal of this tutorial series is to learn DXR using these [tutorials](https://git
 
 Unlike Nvidia's tutorials, each tutorial builds upon the tutorial before it and no code is left out.  Anyone that does these tutorials should not find anything missing.  Please submit an issue if a problem is found.
 
-### [1-CreateWindow](https://github.com/cpyburn/DirectX-DXR-RTX-Tutorials-2/tree/main/1-CreateWindow)
+### [1-CreateWindow](https://github.com/cpyburn/DirectX-DXR-RTX-Tutorials-2/tree/main/1-CreateWindow) - How to create the window
 
-### [2-InitDXR](https://github.com/cpyburn/DirectX-DXR-RTX-Tutorials-2/tree/main/2-InitDXR)
+### [2-InitDXR](https://github.com/cpyburn/DirectX-DXR-RTX-Tutorials-2/tree/main/2-InitDXR) - How to use the ray tracing device and command lists
 
-### [3-AccelerationStructure](https://github.com/cpyburn/DirectX-DXR-RTX-Tutorials-2/tree/main/3-AccelerationStructure)
+### [3-AccelerationStructure](https://github.com/cpyburn/DirectX-DXR-RTX-Tutorials-2/tree/main/3-AccelerationStructure) - How to create the ray tracing acceleration structures
 
-### [4-RtPipelineState](https://github.com/cpyburn/DirectX-DXR-RTX-Tutorials-2/tree/main/4-RtPipelineState)
+### [4-RtPipelineState](https://github.com/cpyburn/DirectX-DXR-RTX-Tutorials-2/tree/main/4-RtPipelineState) - How to create and use the ray tracing pipeline
 
-### [5-ShaderTable](https://github.com/cpyburn/DirectX-DXR-RTX-Tutorials-2/tree/main/5-ShaderTable)
+### [5-ShaderTable](https://github.com/cpyburn/DirectX-DXR-RTX-Tutorials-2/tree/main/5-ShaderTable) - How to build and use a ray tracing shader binding table
 
-### [6-Raytrace](https://github.com/cpyburn/DirectX-DXR-RTX-Tutorials-2/tree/main/6-Raytrace)
+### [6-Raytrace](https://github.com/cpyburn/DirectX-DXR-RTX-Tutorials-2/tree/main/6-Raytrace) - How to do your first ray trace
 
-### [7-BasicShaders](https://github.com/cpyburn/DirectX-DXR-RTX-Tutorials-2/tree/main/7-BasicShaders)
+### [7-BasicShaders](https://github.com/cpyburn/DirectX-DXR-RTX-Tutorials-2/tree/main/7-BasicShaders) - How to ray trace your first triangle using hit and miss shaders
 ![7-BasicShaders](https://user-images.githubusercontent.com/17934438/220754928-e7daed36-cd34-44cf-a028-2c551d8393df.png)
 
-### [8-Instancing](https://github.com/cpyburn/DirectX-DXR-RTX-Tutorials-2/tree/main/8-Instancing)
+### [8-Instancing](https://github.com/cpyburn/DirectX-DXR-RTX-Tutorials-2/tree/main/8-Instancing) - How to instance in the ray tracing top level acceleration structure
 ![image](https://user-images.githubusercontent.com/17934438/221300748-8700b062-8101-4ae6-8c58-dc933d7dfb22.png)
 
-### [9-ConstantBuffer](https://github.com/cpyburn/DirectX-DXR-RTX-Tutorials-2/tree/main/9-ConstantBuffer)
+### [9-ConstantBuffer](https://github.com/cpyburn/DirectX-DXR-RTX-Tutorials-2/tree/main/9-ConstantBuffer) - How to use a per instance ray tracing constant buffer
 ![image](https://user-images.githubusercontent.com/17934438/221318621-82e15186-8c2c-41ff-843d-3f68235d8715.png)
 
-### [9-Bonus:ConstantBuffer](https://github.com/cpyburn/DirectX-DXR-RTX-Tutorials-2/tree/main/9-BonusConstantBuffer)
+### [9-Bonus:ConstantBuffer](https://github.com/cpyburn/DirectX-DXR-RTX-Tutorials-2/tree/main/9-BonusConstantBuffer) - 
 ![image](https://user-images.githubusercontent.com/17934438/221323878-d6feacc0-14b4-413c-b14e-abf0d648e708.png)
 
 ### [10-PerInstanceConstantBuffer](https://github.com/cpyburn/DirectX12-DXR-RTX-Tutorials-2/tree/main/10-PerInstanceConstantBuffer)
