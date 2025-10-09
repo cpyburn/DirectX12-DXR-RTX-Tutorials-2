@@ -49,3 +49,6 @@ Unlike Nvidia's tutorials, each tutorial builds upon the tutorial before it and 
 
 ### [17-IndexBuffer](https://github.com/cpyburn/DirectX12-DXR-RTX-Tutorials-3/tree/main/17-IndexBuffer) - How to add indices to the ray tracing shader
 ![image](https://user-images.githubusercontent.com/17934438/222509414-c22fc5bd-a7cc-48d5-adc1-ec018cdda216.png)
+
+These tutorials are on hold while I work on another project, sorry if you are trying to follow them. I will get back to these as soon as I get some free time.
+
