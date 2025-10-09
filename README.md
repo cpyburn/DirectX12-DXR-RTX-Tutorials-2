@@ -41,4 +41,11 @@ Unlike Nvidia's tutorials, each tutorial builds upon the tutorial before it and 
 ### [14-Refit](https://github.com/cpyburn/DirectX12-DXR-RTX-Tutorials-2/tree/main/14-Refit) - How to update the ray tracing top level acceleration structure
 ![image](https://user-images.githubusercontent.com/17934438/221430337-44e95f40-e64a-4300-9306-f24221888543.png)
 
-### If you finished these, head on over to the [Advanced Tutorials](https://github.com/cpyburn/DirectX12-DXR-RTX-Tutorials-3)
+### [15-VertexBuffer](https://github.com/cpyburn/DirectX12-DXR-RTX-Tutorials-3/tree/main/15-VertexBuffer) - How to add a vertex buffer to ray tracing shader
+![image](https://user-images.githubusercontent.com/17934438/221937776-264c6de5-0577-4236-8d35-1e8c1833dcef.png)
+
+### [16-NormalLighting](https://github.com/cpyburn/DirectX12-DXR-RTX-Tutorials-3/tree/main/16-NormalLighting) - How to add normals and do diffuse lighting
+![image](https://user-images.githubusercontent.com/17934438/222509414-c22fc5bd-a7cc-48d5-adc1-ec018cdda216.png)
+
+### [17-IndexBuffer](https://github.com/cpyburn/DirectX12-DXR-RTX-Tutorials-3/tree/main/17-IndexBuffer) - How to add indices to the ray tracing shader
+![image](https://user-images.githubusercontent.com/17934438/222509414-c22fc5bd-a7cc-48d5-adc1-ec018cdda216.png)
