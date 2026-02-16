@@ -806,6 +806,7 @@ void Tutorial01::createRtPipelineState()
     //  2 for RayGen root-signature (root-signature and the subobject association)
     //  9.2.a 2 for hit-program root-signature (root-signature and the subobject association)
     //  9.2.b 2 for miss-shader root-signature (signature and association)
+    //  12.1.d
     //  2 for shader config (shared between all programs. 1 for the config, 1 for association)
     //  1 for pipeline config
     //  1 for the global root signature
