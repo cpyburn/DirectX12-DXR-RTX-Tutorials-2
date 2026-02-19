@@ -1029,8 +1029,8 @@ void Tutorial01::onFrameRender()
     raytraceDesc.HitGroupTable.StartAddress = mpShaderTable->GetGPUVirtualAddress() + hitOffset;
     raytraceDesc.HitGroupTable.StrideInBytes = mShaderTableEntrySize;
     // 12.3.d
-    raytraceDesc.HitGroupTable.SizeInBytes = mShaderTableEntrySize * 4; // todo: this is an error? shouldn't be 2? Chad 2/19/2026
-    // We have 4 hit entries - 3 for the triangle hit programs and 1 for the plane hit program. The raytracing pipeline will run the correct hit program based on the instance hit, but we need to make sure all entries are in the shader-table
+    raytraceDesc.HitGroupTable.SizeInBytes = mShaderTableEntrySize * 4; // We have 4 hit entries - 3 for the triangle hit programs and 1 for the plane hit program. 
+    // The raytracing pipeline will run the correct hit program based on the instance hit, but we need to make sure all entries are in the shader-table
     
     // 6.4.e Bind the empty root signature
     mpCmdList->SetComputeRootSignature(mpEmptyRootSig);
