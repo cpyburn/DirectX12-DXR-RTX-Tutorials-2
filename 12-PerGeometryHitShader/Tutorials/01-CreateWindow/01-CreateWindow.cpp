@@ -806,6 +806,7 @@ void Tutorial01::createRtPipelineState()
     //  2 for RayGen root-signature (root-signature and the subobject association)
     //  9.2.a 2 for hit-program root-signature (root-signature and the subobject association)
     //  9.2.b 2 for miss-shader root-signature (signature and association)
+    //  12.1.d
     //  2 for shader config (shared between all programs. 1 for the config, 1 for association)
     //  1 for pipeline config
     //  1 for the global root signature
@@ -1028,8 +1029,9 @@ void Tutorial01::onFrameRender()
     raytraceDesc.HitGroupTable.StartAddress = mpShaderTable->GetGPUVirtualAddress() + hitOffset;
     raytraceDesc.HitGroupTable.StrideInBytes = mShaderTableEntrySize;
     // 12.3.d
-    raytraceDesc.HitGroupTable.SizeInBytes = mShaderTableEntrySize * 4;
-
+    raytraceDesc.HitGroupTable.SizeInBytes = mShaderTableEntrySize * 4; // We have 4 hit entries - 3 for the triangle hit programs and 1 for the plane hit program. 
+    // The raytracing pipeline will run the correct hit program based on the instance hit, but we need to make sure all entries are in the shader-table
+    
     // 6.4.e Bind the empty root signature
     mpCmdList->SetComputeRootSignature(mpEmptyRootSig);
 
