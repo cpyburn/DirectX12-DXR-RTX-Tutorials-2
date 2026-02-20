@@ -832,6 +832,7 @@ void Tutorial01::createRtPipelineState()
     //  1 for hit-group
     //  2 for RayGen root-signature (root-signature and the subobject association)
     //  9.2.a 2 for hit-program root-signature (root-signature and the subobject association)
+	//  2 for plane hit-program root-signature (root-signature and the subobject association)
     //  9.2.b 2 for miss-shader root-signature (signature and association)
     //  2 for shader config (shared between all programs. 1 for the config, 1 for association)
     //  1 for pipeline config
@@ -858,20 +859,20 @@ void Tutorial01::createRtPipelineState()
 
     // 4.8.e Create the ray-gen root-signature and association
     LocalRootSignature rgsRootSignature(mpDevice, createRayGenRootDesc().desc);
-    subobjects[index] = rgsRootSignature.subobject; // 3 RayGen Root Sig
+    subobjects[index] = rgsRootSignature.subobject; // 4 RayGen Root Sig
 
     // 4.8.a createRtPipelineState
     uint32_t rgsRootIndex = index++; // 3
     ExportAssociation rgsRootAssociation(&kRayGenShader, 1, &(subobjects[rgsRootIndex]));
-    subobjects[index++] = rgsRootAssociation.subobject; // 4 Associate Root Sig to RGS
+    subobjects[index++] = rgsRootAssociation.subobject; // 5 Associate Root Sig to RGS
 
     // 9.2.d Create the hit root-signature and association
     LocalRootSignature hitRootSignature(mpDevice, createHitRootDesc().desc);
-    subobjects[index] = hitRootSignature.subobject; // 5 Hit Root Sig
+    subobjects[index] = hitRootSignature.subobject; // 6 Hit Root Sig
 
     uint32_t hitRootIndex = index++; // 5
     ExportAssociation hitRootAssociation(&kClosestHitShader, 1, &(subobjects[hitRootIndex]));
-    subobjects[index++] = hitRootAssociation.subobject; // 6 Associate Hit Root Sig to Hit Group
+    subobjects[index++] = hitRootAssociation.subobject; // 7 Associate Hit Root Sig to Hit Group
 
     // 13.2.g Create the plane hit root-signature and association
     LocalRootSignature planeHitRootSignature(mpDevice, createPlaneHitRootDesc().desc);
